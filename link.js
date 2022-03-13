@@ -1,13 +1,12 @@
-import { Link } from './link-old.js';
 import {Request, Response} from './message.js';
-import { uint8 } from './rob/encodings/base-encodings.js';
-import { type } from './rob/encodings.js';
-import { any, extern } from './rob/encodings/reference-encodings.js';
-import { ExternScheme } from './rob/scheme-handler.js';
+import { type } from '../rob/encodings.js';
+import { any, extern } from '../rob/encodings.js';
+import { ExternScheme } from '../rob/scheme-handler.js';
 import { Pipe } from './sendable-pipe.js';
-import { ExternHandler, COMMUNICATION_SCHEMES } from './rob/extern-handler.js';
-import { Read, Write } from './rob/reader-writer.js';
-import { bufferString, randomInt } from './utils/mod.js';
+import { ExternHandler, COMMUNICATION_SCHEMES } from '../rob/extern-handler.js';
+import { Read, Write } from '../rob/reader-writer.js';
+import { bufferString, randomInt } from '../utils/mod.js';
+import { ChainToPipeHandler } from './sendable-pipe.js';
 
 export const moduleURL = import.meta.url;
 
@@ -20,28 +19,22 @@ export class Authenicate extends Request {
     }
 }
 
-/** placeholder for objects which are remotely linked */
-export class LinkedPlaceholder {
-    static moduleURL = import.meta.url;
-    static encoding = extern('link');
-    constructor(connection, uri) {
-        this.connection = connection;
-        this.uri = uri;
+/** an object which is sent as a link rather than as iteslf */
+export class Linkable {
+    constructor (object) {
+        return new Proxy(()=>{}, new ChainToPipeHandler(undefined, pipe => pipe.resolve(object)));
     }
+    static moduleURL = moduleURL;
+    static encoding = extern('link');
 }
 
-/** a linked object, inheriting from this will link the instance, but other link methods may be used */
+/** an object which references a linked object */
 export class Linked {
-    static moduleURL = import.meta.url;
-    static encoding = extern('link');
-}
-
-export class LinkTest extends Linked {
-    constructor() {
-        super();
-        this.a = 1;
-        this.b = 2;
+    constructor (connection, uri) {
+        return new Proxy(()=>{}, new ChainToPipeHandler(undefined, pipe => console.log(pipe)));
     }
+    static moduleURL = moduleURL;
+    static encoding = extern('link');
 }
 
 /** handler for linking remote modules */
@@ -76,7 +69,7 @@ export class LinkScheme extends ExternScheme {
         else return `link:${randomInt().toString(32)}`;
     }
     getItem(uri) {
-        return new LinkedPlaceholder(this.connection, uri);
+        return new Linked(this.connection, uri);
     }
 }
 
