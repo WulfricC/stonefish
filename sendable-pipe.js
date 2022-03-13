@@ -1,7 +1,7 @@
-import { array, struct } from './rob/encodings/collection-encodings.js';
-import { any, extern, referencable } from './rob/encodings/reference-encodings.js';
-import { constant, float64 } from './rob/encodings.js';
-import { setAlias } from './rob/alias.js';
+import { array, struct } from '../rob/encodings/collection-encodings.js';
+import { any, extern, referencable } from '../rob/encodings/reference-encodings.js';
+import { constant, float64 } from '../rob/encodings.js';
+import { setAlias } from '../rob/alias.js';
 import { Request } from './message.js';
 
 const moduleURL = import.meta.url;

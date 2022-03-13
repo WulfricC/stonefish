@@ -1,5 +1,5 @@
 import { Message } from "./message.js";
-import { type } from "./rob/encodings.js";
+import { type } from "../rob/encodings.js";
 
 export class Mossage extends Message {
     static moduleURL = import.meta.url;
