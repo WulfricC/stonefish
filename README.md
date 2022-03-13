@@ -1,2 +1,2 @@
-# stonefish
- mess of client server communication
+# Stonefish
+Don't look too closely at this yet.
