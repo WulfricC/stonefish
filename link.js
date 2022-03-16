@@ -30,7 +30,7 @@ export class Linked extends ChainToPipeHandler{
     constructor (connection, uri) {
         super();
         const proxy = new Proxy(()=>{}, this);
-        this.resolve = pipe => connection.request(new Resolve(pipe, proxy));
+        this.resolve = async pipe => connection.request(new Resolve(await pipe.awaitAll(), proxy));
         return proxy;
     }
     static moduleURL = moduleURL;

@@ -31,6 +31,13 @@ export class PipeNode {
         this.func = func;
         this.args = args;
     }
+    async awaitAll () {
+        const newArgs = [];
+        for(let i = 0; i < this.args.length; i ++) {
+            newArgs[i] = await this.args[i];
+        }
+        return new PipeNode(this.func, newArgs);
+    }
     toString() {
         return `${this.func.name}(${this.args.map(v => v.toString()).join(', ')})`
     }
@@ -46,6 +53,14 @@ export class Pipe {
     /** Add an operation onto the pipe. */
     pipe(func, ...args) {
         return new Pipe(this.nodes.concat(new PipeNode(func, args)));
+    }
+
+    async awaitAll() {
+        const newNodes = [];
+        for(const node of this.nodes) {
+            newNodes.push(await node.awaitAll());
+        }
+        return new Pipe(newNodes);
     }
 
     /** Get the number of operations of the pipe. */
@@ -102,6 +117,8 @@ deleteProperty.moduleURL = moduleURL;
 
 /** proxy handler which converts a chain into a pipe */
 export class ChainToPipeHandler {
+    static moduleURL = moduleURL;
+    static encoding = extern('link');
     #cache = {};
     constructor (pipe = new Pipe(), resolve = pipe => pipe.resolve()) {
         this.pipe = pipe;
@@ -124,7 +141,7 @@ export class ChainToPipeHandler {
         if (property === 'constructor') return this.constructor;
         if (property === 'then') {
             if (this.pipe.length === 0) return undefined;
-            else return (resolve = v=>v) => resolve(this.resolve(this.pipe));
+            else return async (resolve = v=>v) => resolve(await this.resolve(this.pipe));
         }
         if (property in this.#cache)
             return this.#cache[property];
