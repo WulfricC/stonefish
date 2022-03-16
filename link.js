@@ -1,4 +1,4 @@
-import {Request, Response} from './message.js';
+import {Request, Response, Deref, Authenicate, Resolve} from './message.js';
 import { type } from '../rob/encodings.js';
 import { any, extern } from '../rob/encodings.js';
 import { ExternScheme } from '../rob/scheme-handler.js';
@@ -7,31 +7,29 @@ import { ExternHandler, COMMUNICATION_SCHEMES } from '../rob/extern-handler.js';
 import { Read, Write } from '../rob/reader-writer.js';
 import { bufferString, randomInt } from '../utils/mod.js';
 import { ChainToPipeHandler } from './sendable-pipe.js';
+import '../rob/built-ins.js'
+import { BiMap } from '../utils/bi-map.js';
 
 export const moduleURL = import.meta.url;
 
-export class Authenicate extends Request {
-    static moduleURL = moduleURL;
-    static encoding = type(this);
-    constructor(key) {
-        super();
-        this.key = key;
-    }
-}
+const DEBUG = ['message', 'buffer', 'size'];
 
 /** an object which is sent as a link rather than as iteslf */
 export class Linkable {
     constructor (object) {
-        return new Proxy(()=>{}, new ChainToPipeHandler(undefined, pipe => pipe.resolve(object)));
+        Object.assign(this, object);
     }
     static moduleURL = moduleURL;
     static encoding = extern('link');
 }
 
 /** an object which references a linked object */
-export class Linked {
+export class Linked extends ChainToPipeHandler{
     constructor (connection, uri) {
-        return new Proxy(()=>{}, new ChainToPipeHandler(undefined, pipe => console.log(pipe)));
+        super();
+        const proxy = new Proxy(()=>{}, this);
+        this.resolve = pipe => connection.request(new Resolve(pipe, proxy));
+        return proxy;
     }
     static moduleURL = moduleURL;
     static encoding = extern('link');
@@ -44,7 +42,7 @@ export class RemoteModuleLinker {
     async onRequest (request, respondWith) {
         const {socket, response} = Deno.upgradeWebSocket(request);
         try {
-            const link = new Connection(socket, new LinkTest);
+            const link = new Connection(socket, new Linkable({a:1, b:2, c:3, log:(v)=>console.log(v), new:(v)=>new Linkable(v)}));
             //console.log(link);
             respondWith(response);
             //await new Promise((resolve, reject) => socket.onopen = () => resolve(socket));
@@ -63,13 +61,29 @@ export class LinkScheme extends ExternScheme {
     constructor(connection) {
         super();
         this.connection = connection;
+        this.itemCache = new Map();
+        this.uriCache = new WeakMap();
+        this.registry = new FinalizationRegistry(heldValue => {
+            this.connection.send(new Deref(heldValue));
+        });
     }
     getURI(item) {
-        if (item instanceof LinkedPlaceholder) return item.uri;
-        else return `link:${randomInt().toString(32)}`;
+        if (item.constructor === Linked)
+            return this.uriCache.get(item);
+        const uri = `link:${randomInt().toString(32)}`;
+        this.itemCache.set(uri, item);
+        return uri;
     }
     getItem(uri) {
-        return new Linked(this.connection, uri);
+        if (this.itemCache.has(uri))
+            return this.itemCache.get(uri);
+        const linked = new Linked(this.connection, uri);
+        this.registry.register(linked, uri);
+        this.uriCache.set(linked, uri);
+        return linked;
+    }
+    clear(uri) {
+        this.itemCache.delete(uri);
     }
 }
 
@@ -89,7 +103,8 @@ export class Connection {
             const writer = new Write(this.externHandler);
             any(writer)(data);
             const buffer = writer.toBuffer();
-            console.log('<<<', bufferString(buffer));
+            if (DEBUG.includes('message')) ('<<<', data);
+            if (DEBUG.includes('buffer')) ('<<<',buffer.byteLength, ' ', bufferString(buffer));
             this.connectionInterface.send(buffer);
         }
         catch(err) {
@@ -102,17 +117,21 @@ export class Connection {
         let buffer = data;
         if (data instanceof Blob)
             buffer = await data.arrayBuffer();
-        console.log('>>>', bufferString(buffer));
         const reader = new Read(this.externHandler, buffer);
         const message = await any(reader)();
-        console.log(message, message instanceof Response);
+        if (DEBUG.includes('message')) console.log('>>>', message);
+        if (DEBUG.includes('buffer')) console.log('>>>',buffer.byteLength, ' ', bufferString(buffer));
         if (message instanceof Response) {
             this.unresolvedPromises.get(message.id).resolve(message.value);
             this.unresolvedPromises.delete(message.id);
             return;
         }
-        if (message instanceof Pipe) {
-            this.send(message.response(message.resolve()));
+        if (message instanceof Deref) {
+            this.externHandler.clear(message.uri);
+        }
+        if (message instanceof Resolve) {
+            const result = message.resolver.resolve(message.input);
+            this.send(message.response(result));
             return;
         }
         if (message instanceof Authenicate) {

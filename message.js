@@ -28,3 +28,31 @@ export class Request extends Message {
         return new Response(this.id, value);
     }
 }
+
+export class Authenicate extends Request {
+    static moduleURL = moduleURL;
+    static encoding = type(this);
+    constructor(key) {
+        super();
+        this.key = key;
+    }
+}
+
+export class Resolve extends Request {
+    static moduleURL = moduleURL;
+    static encoding = type(this);
+    constructor(resolver, input) {
+        super();
+        this.resolver = resolver;
+        this.input = input;
+    }
+}
+
+export class Deref extends Message {
+    static moduleURL = moduleURL;
+    static encoding = type(this);
+    constructor(uri) {
+        super();
+        this.uri = uri;
+    }
+}

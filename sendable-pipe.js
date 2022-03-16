@@ -22,7 +22,7 @@ setAlias(PREV, _PREV);
 
 export class PipeNode {
     static moduleURL = moduleURL;
-    static encoding = struct(this, { func: referencable(extern('esmod')), args: array(any) });
+    static encoding = referencable(struct(this, { func: referencable(extern('esmod')), args: array(any) }));
     constructor(func, args) {
         this.func = func;
         this.args = args;
@@ -33,11 +33,10 @@ export class PipeNode {
 }
 
 /** a request which runs a set list of operations on its requested item (likely a linked object) */
-export class Pipe extends Request{
+export class Pipe {
     static moduleURL = moduleURL;
-    static encoding = struct(this, { input: any, nodes: array(PipeNode.encoding), id:float64 });
+    static encoding = struct(this, {nodes: array(PipeNode.encoding)});
     constructor(nodes = []) {
-        super();
         this.nodes = nodes;
     }
     /** add an operation onto the pipe */
@@ -93,13 +92,15 @@ deleteProperty.moduleURL = moduleURL;
 /** proxy handler which converts a chain into a pipe */
 export class ChainToPipeHandler {
     #cache = {};
-    constructor (pipe = new Pipe(), resolve = pipe => pipe.resolve(), constructor = this) {
+    constructor (pipe = new Pipe(), resolve = pipe => pipe.resolve()) {
         this.pipe = pipe;
         this.resolve = resolve;
-        this.defaultConstructor = constructor;
     }
     sub (...args) {
         return new Proxy(()=>{}, new ChainToPipeHandler(this.pipe.pipe(...args), this.resolve));
+    }
+    proxy () {
+        return new Proxy(()=>{}, this);
     }
     toPrimitive (hint) {
         if (hint === 'string' || hint === 'default')
@@ -109,7 +110,7 @@ export class ChainToPipeHandler {
     }
     get (target, property) {
         if (property === Symbol.toPrimitive) return this.toPrimitive.bind(this);
-        if (property === 'constructor') return this.defaultConstructor;
+        if (property === 'constructor') return this.constructor;
         if (property === 'then') {
             if (this.pipe.length === 0) return undefined;
             else return (resolve = v=>v) => resolve(this.resolve(this.pipe));
