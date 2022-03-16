@@ -44,7 +44,7 @@ export class RemoteModuleLinker {
     async onRequest (request, respondWith) {
         const {socket, response} = Deno.upgradeWebSocket(request);
         try {
-            const link = new Connection(socket, new Linkable({a:1, b:2, c:3, log:(v)=>console.log(v), new:(v)=>new Linkable(v)}));
+            const link = new Connection(socket, new Linkable({a:1, b:2, c:3, log:(v)=>console.log(v), new:(v)=>new Linkable(v), add: function (v ){this.a += v}}));
             //console.log(link);
             respondWith(response);
             //await new Promise((resolve, reject) => socket.onopen = () => resolve(socket));
