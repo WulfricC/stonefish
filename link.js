@@ -1,18 +1,19 @@
-import {Request, Response, Deref, Authenicate, Resolve} from './message.js';
+import {Request, Response, Deref, Authenicate, Resolve, Message} from './message.js';
 import { type } from '../rob/encodings.js';
 import { any, extern } from '../rob/encodings.js';
 import { ExternScheme } from '../rob/scheme-handler.js';
-import { Pipe } from './sendable-pipe.js';
+import { apply, get, Pipe, PipeNode, _IN, _PREV } from './sendable-pipe.js';
 import { ExternHandler, COMMUNICATION_SCHEMES } from '../rob/extern-handler.js';
 import { Read, Write } from '../rob/reader-writer.js';
 import { bufferString, randomInt } from '../utils/mod.js';
 import { ChainToPipeHandler } from './sendable-pipe.js';
 import '../rob/built-ins.js'
 import { BiMap } from '../utils/bi-map.js';
+import { _Error, _Null, _Number, _Object, _String, _Undefined } from '../rob/built-ins.js';
 
 export const moduleURL = import.meta.url;
 
-const DEBUG = ['message', 'buffer', 'size'];
+const DEBUG = ['buffer'];
 
 /** an object which is sent as a link rather than as iteslf */
 export class Linkable {
@@ -87,6 +88,13 @@ export class LinkScheme extends ExternScheme {
     }
 }
 
+const MESSAGING_HEAD = [
+    _String, _Number, _Object, _Error, _Null, _Undefined,
+    Message, Authenicate, Request, Response, Resolve,
+    Linked, Linkable, 
+    Pipe, PipeNode, _PREV, _IN, get, apply
+];
+
 /** object which handles a connnection over some interface via ROB */
 export class Connection {
     constructor(connectionInterface, api) {
@@ -100,11 +108,11 @@ export class Connection {
     /**send some data as rob*/
     async send(data) {
         try {
-            const writer = new Write(this.externHandler);
+            const writer = new Write(this.externHandler, MESSAGING_HEAD);
             any(writer)(data);
             const buffer = writer.toBuffer();
-            if (DEBUG.includes('message')) ('<<<', data);
-            if (DEBUG.includes('buffer')) ('<<<',buffer.byteLength, ' ', bufferString(buffer));
+            if (DEBUG.includes('message')) console.log('<<<', data);
+            if (DEBUG.includes('buffer')) console.log('<<<',buffer.byteLength, ' ', bufferString(buffer));
             this.connectionInterface.send(buffer);
         }
         catch(err) {
@@ -117,7 +125,7 @@ export class Connection {
         let buffer = data;
         if (data instanceof Blob)
             buffer = await data.arrayBuffer();
-        const reader = new Read(this.externHandler, buffer);
+        const reader = new Read(this.externHandler, buffer, MESSAGING_HEAD);
         const message = await any(reader)();
         if (DEBUG.includes('message')) console.log('>>>', message);
         if (DEBUG.includes('buffer')) console.log('>>>',buffer.byteLength, ' ', bufferString(buffer));

@@ -1,8 +1,8 @@
 import { array, struct } from '../rob/encodings/collection-encodings.js';
-import { any, extern, referencable } from '../rob/encodings/reference-encodings.js';
+import { any, extern, referencable, reference } from '../rob/encodings/reference-encodings.js';
 import { constant, float64 } from '../rob/encodings.js';
 import { setAlias } from '../rob/alias.js';
-import { Request } from './message.js';
+import { _Error, _Null, _Number, _Object, _String, _Undefined } from '../rob/built-ins.js';
 
 const moduleURL = import.meta.url;
 
@@ -22,7 +22,7 @@ setAlias(PREV, _PREV);
 
 export class PipeNode {
     static moduleURL = moduleURL;
-    static encoding = referencable(struct(this, { func: referencable(extern('esmod')), args: array(any) }));
+    static encoding = struct(this, { func: referencable(extern('esmod')), args: array(reference) });
     constructor(func, args) {
         this.func = func;
         this.args = args;
