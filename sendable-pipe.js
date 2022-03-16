@@ -3,9 +3,11 @@ import { any, extern, referencable, reference } from '../rob/encodings/reference
 import { constant, float64 } from '../rob/encodings.js';
 import { setAlias } from '../rob/alias.js';
 import { _Error, _Null, _Number, _Object, _String, _Undefined } from '../rob/built-ins.js';
+import { checkEsmod } from '../rob/esmod.js';
 
 const moduleURL = import.meta.url;
 
+/** Indicates the argument should be the output of the previous function. */
 export const IN = Symbol('IN');
 export class _IN {
     static moduleURL = moduleURL;
@@ -13,6 +15,7 @@ export class _IN {
 }
 setAlias(IN, _IN);
 
+/** Indicates the argument's value should be the previous value (used for calling functions of instances).*/
 export const PREV = Symbol('PREV');
 export class _PREV {
     static moduleURL = moduleURL;
@@ -20,6 +23,7 @@ export class _PREV {
 }
 setAlias(PREV, _PREV);
 
+/** A node of the pipe's flow.  Stores argument and function data.  Functions must be referenceable if pipe is to be encoded. */
 export class PipeNode {
     static moduleURL = moduleURL;
     static encoding = struct(this, { func: referencable(extern('esmod')), args: array(reference) });
@@ -32,22 +36,24 @@ export class PipeNode {
     }
 }
 
-/** a request which runs a set list of operations on its requested item (likely a linked object) */
+/** A request which stores a set list of operations on its requested item*/
 export class Pipe {
     static moduleURL = moduleURL;
     static encoding = struct(this, {nodes: array(PipeNode.encoding)});
     constructor(nodes = []) {
         this.nodes = nodes;
     }
-    /** add an operation onto the pipe */
+    /** Add an operation onto the pipe. */
     pipe(func, ...args) {
         return new Pipe(this.nodes.concat(new PipeNode(func, args)));
     }
+
+    /** Get the number of operations of the pipe. */
     get length () {
         return this.nodes.length;
     }
 
-    /** run the list of operations and return result */
+    /** Run the list of operations and return result. */
     resolve(input) {
         let feed = input;
         let prev = globalThis;
@@ -63,26 +69,31 @@ export class Pipe {
         return feed;
     }
 
+    /** Create a string representation of the pipe. */
     toString() {
         return `Pipe[\n\t${this.nodes.join(',\n\t')}\n]`
     }
 }
 
+/** Get a value (esmod: refrerenceable). */
 export function get(object, key) {
     return object[key];
 }
 get.moduleURL = moduleURL;
 
+/** Run a function on an object (esmod: refrerenceable). */
 export function apply(object, thisArg, ...args) {
     return object.apply(thisArg, args);
 }
 apply.moduleURL = moduleURL;
 
+/**Set a value an object (esmod: refrerenceable). */
 export function set(object, key, value) {
     return object[key] = value;
 }
 set.moduleURL = moduleURL;
 
+/** Delete a property of an object (esmod: refrerenceable). */
 export function deleteProperty(object, key) {
     return delete object[key];
 }

@@ -13,9 +13,10 @@ import { _Error, _Null, _Number, _Object, _String, _Undefined } from '../rob/bui
 
 export const moduleURL = import.meta.url;
 
-const DEBUG = ['buffer'];
+/** Add 'module' to show modules being sent, add 'buffer' to show raw data. */
+const DEBUG = [];
 
-/** an object which is sent as a link rather than as iteslf */
+/** An object which is sent as a link rather than as iteslf. (Any extern('link') encodding will send as a link however)*/
 export class Linkable {
     constructor (object) {
         Object.assign(this, object);
@@ -24,7 +25,7 @@ export class Linkable {
     static encoding = extern('link');
 }
 
-/** an object which references a linked object */
+/** An object which references a remotely linked object. */
 export class Linked extends ChainToPipeHandler{
     constructor (connection, uri) {
         super();
@@ -36,7 +37,7 @@ export class Linked extends ChainToPipeHandler{
     static encoding = extern('link');
 }
 
-/** handler for linking remote modules */
+/** Server handler for linking remote modules. */
 export class RemoteModuleLinker {
     constructor() {
     }
@@ -57,7 +58,7 @@ export class RemoteModuleLinker {
     }
 }
 
-/** handler for the "link:" scheme */
+/** Definition of the "link:" scheme. */
 export class LinkScheme extends ExternScheme {
     constructor(connection) {
         super();
@@ -88,6 +89,7 @@ export class LinkScheme extends ExternScheme {
     }
 }
 
+/** Header to reduce the size of common messages. */
 const MESSAGING_HEAD = [
     _String, _Number, _Object, _Error, _Null, _Undefined,
     Message, Authenicate, Request, Response, Resolve,
@@ -95,7 +97,7 @@ const MESSAGING_HEAD = [
     Pipe, PipeNode, _PREV, _IN, get, apply
 ];
 
-/** object which handles a connnection over some interface via ROB */
+/** Object which handles a connnection over some interface via ROB.  ConnectionInterface must implement onmessage and send */
 export class Connection {
     constructor(connectionInterface, api) {
         this.connectionInterface = connectionInterface;
@@ -120,7 +122,7 @@ export class Connection {
             throw err;
         }
     }
-    /**handle recieved data */
+    /** handle recieved data */
     async recieve(data) {
         let buffer = data;
         if (data instanceof Blob)
@@ -157,6 +159,8 @@ export class Connection {
     }
 }
 
+
+/** Link to a server via Websocket (at the moment)*/
 export async function link (uri) {
     uri = new URL (uri, location.origin);
     if (!/(.js)|(.mjs)$/.test(uri.pathname)) throw new Error('can only link to a javascript module');
@@ -167,3 +171,12 @@ export async function link (uri) {
         return connection.request(new Authenicate('password'));
     }   
 }
+
+/**
+Small Example:
+const {link} = await import('./stonefish/link.js');
+const l = await link('ws://localhost/app/test.js');
+const t = await l.new({a:1, new : 10000});
+console.log(await t.new);
+console.log('done')
+ */
