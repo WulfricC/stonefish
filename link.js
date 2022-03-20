@@ -41,6 +41,10 @@ export class Linked extends ChainToPipeHandler{
 export class RemoteModuleLinker {
     constructor() {
     }
+    route (request){
+        return request.method === 'GET'
+            && request.headers.has('upgrade') === 'websocket';
+    }
     async onRequest (request, respondWith) {
         const {socket, response} = Deno.upgradeWebSocket(request);
         try {

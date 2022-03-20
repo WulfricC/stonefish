@@ -11,41 +11,6 @@ import {posix} from "https://deno.land/std@0.109.0/path/mod.ts";
 
 const statSync = Deno.statSync;
 
-export function httpAt(path) {
-    return (request) => {
-        const url = new URL(request.url);
-        return url.protocol === 'http:' && url.pathname === path;
-    }
-}
-
-export function httpUnder(path) {
-    return (request) => {
-        const url = new URL(request.url);
-        return url.protocol === 'http:' && url.pathname.search(path) === 0;
-    }
-}
-
-export function webSocketAt(path) {
-    return (request) => {
-        const url = new URL(request.url);
-        return url.protocol === 'http:' && url.pathname === path && request.headers.get('upgrade') === 'websocket';
-    }
-}
-
-export function webSocketUnder(path) {
-    return (request) => {
-        const url = new URL(request.url);
-        return url.protocol === 'http:' && url.pathname.search(path) === 0 && request.headers.get('upgrade') === 'websocket';
-    }
-}
-
-export function httpHost(host) {
-    return (request) => {
-        const url = new URL(request.url);
-        return url.protocol === 'http:' && url.host === host;
-    }
-}
-
 export class Server {
     routers = [];
     routeCache = new Map();
@@ -55,9 +20,9 @@ export class Server {
         this.port = port;
     }   
     
-    route(rule, handler) {
+    route(handler) {
         if (this.listening) throw new Error(`Cannot add routes once listening`)
-        this.routers.push({rule, handler});
+        this.routers.push(handler);
         return this;
     }
     async listen() {
@@ -68,8 +33,8 @@ export class Server {
     }
     async handleHttp(conn) {
         for await (const {request, respondWith} of Deno.serveHttp(conn)) {
-            for (const {rule, handler} of this.routers) {
-                if (rule(request)) {
+            for (const handler of this.routers) {
+                if (handler.route(request)) {
                     handler.onRequest(request, respondWith);
                     break;
                 }
@@ -80,21 +45,24 @@ export class Server {
 
 export class StaticFileHandler {
     constructor({
-            root = '.',
+            urlRoot = '.',
+            fileRoot = '.',
             indexFiles = ['.', './index.html', './index.htm', './default.html', './default.html'],
             dirRedirect = '/',
             cors = true,
             } = {}) {
-        this.root = root;
+        this.fileRoot = fileRoot;
         this.indexFiles = indexFiles;
         this.dirRedirect = dirRedirect;
         this.cors = cors;
+        this.urlRoot = urlRoot;
+    }
+    route (request){
+        return request.method === 'GET'
+            && !request.headers.has('upgrade')
     }
     async onRequest (request, respondWith) {
-        if (request.method === 'GET')
-            respondWith(this.onGet(request));
-        else if (request.method === 'POST')
-            respondWith(this.onPost(request));
+        respondWith(this.onGet(request));
         //respondWith (new Response(null, {status : 301, headers :{Location: urlPath + '/'}}))
     }    
     async onGet (request) {
@@ -102,7 +70,7 @@ export class StaticFileHandler {
         const urlPath = new URL(request.url).pathname
         const pathObj = posix.parse(urlPath)
         pathObj.root = '/';
-        const path = this.root + posix.format(pathObj);
+        const path = this.fileRoot + posix.format(pathObj);
 
         // redirect directories to trailing slash or non trailing slash versions
         if (existsSync(path) && statSync(path).isDirectory) {

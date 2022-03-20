@@ -2,7 +2,9 @@
 
 ## Link
 
-Add nested items inside link handler
+Neaten linking library
+allow to actually link to files now
+add "main()" and "onconnect()"
 
 ## Server
 
