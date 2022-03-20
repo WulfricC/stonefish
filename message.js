@@ -22,11 +22,23 @@ export class Response extends Message {
     }
 }
 
+export class Reject extends Message {
+    static moduleURL = moduleURL;
+    static encoding = struct(this, {id: float64, value: reference});
+    constructor(id, value) {
+        super(id);
+        this.value = value;
+    }
+}
+
 export class Request extends Message {
     static moduleURL = moduleURL;
     static encoding = struct(this, {id: float64});
     response(value) {
         return new Response(this.id, value);
+    }
+    error(value) {
+        return new Reject(this.id, value);
     }
 }
 

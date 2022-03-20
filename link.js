@@ -1,4 +1,4 @@
-import {Request, Response, Deref, Authenicate, Resolve, Message} from './message.js';
+import {Request, Response, Deref, Authenicate, Resolve, Message, Reject as Reject} from './message.js';
 import { type } from '../rob/encodings.js';
 import { any, extern } from '../rob/encodings.js';
 import { ExternScheme } from '../rob/scheme-handler.js';
@@ -104,7 +104,8 @@ const MESSAGING_HEAD = [
 
 /** Object which handles a connnection over some interface via ROB.  ConnectionInterface must implement onmessage and send */
 export class Connection {
-    constructor(connectionInterface, api) {
+    constructor(connectionInterface, api, authenticator = ) {
+        this.authenticator = authenticator;
         this.connectionInterface = connectionInterface;
         this.api = api;
         this.connectionInterface.onmessage = (e) => this.recieve(e.data);
@@ -141,15 +142,26 @@ export class Connection {
             this.unresolvedPromises.delete(message.id);
             return;
         }
+        if (message instanceof Reject) {
+            this.unresolvedPromises.get(message.id).reject(message.value);
+            this.unresolvedPromises.delete(message.id);
+            return;
+        }
         if (message instanceof Deref) {
             this.externHandler.clear(message.uri);
         }
         if (message instanceof Resolve) {
-            const result = message.resolver.resolve(message.input);
-            this.send(message.response(result));
+            try {
+                const result = message.resolver.resolve(message.input);
+                this.send(message.response(result));
+            }
+            catch(err) {
+                this.send(message.error(err));
+            }
             return;
         }
         if (message instanceof Authenicate) {
+            if()
             this.send(message.response(this.api));
             return;
         }
