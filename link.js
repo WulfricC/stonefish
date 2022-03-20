@@ -16,7 +16,7 @@ export const moduleURL = import.meta.url;
 /** Add 'module' to show modules being sent, add 'buffer' to show raw data. */
 const DEBUG = [];
 
-/** An object which is sent as a link rather than as iteslf. (Any extern('link') encodding will send as a link however)*/
+/** An object which is sent as a link rather than as iteslf. (Any extern('link') encoding will send as a link however)*/
 export class Linkable {
     constructor (object) {
         Object.assign(this, object);
@@ -39,21 +39,22 @@ export class Linked extends ChainToPipeHandler{
 
 /** Server handler for linking remote modules. */
 export class RemoteModuleLinker {
-    constructor() {
+    constructor({fileRoot = './'} = {}) {
+        this.fileRoot = fileRoot;
     }
     route (request){
         return request.method === 'GET'
-            && request.headers.has('upgrade') === 'websocket';
+            && request.headers.get('upgrade') === 'websocket';
     }
     async onRequest (request, respondWith) {
         const {socket, response} = Deno.upgradeWebSocket(request);
         try {
-            const link = new Connection(socket, new Linkable({a:1, b:2, c:3, log:(v)=>console.log(v), new:(v)=>new Linkable(v), add: function (v ){this.a += v}}));
-            //console.log(link);
+            const module = await import(request.url);
+            const link = new Connection(socket, new Linkable(module));
             respondWith(response);
-            //await new Promise((resolve, reject) => socket.onopen = () => resolve(socket));
-            
-            //if ('onLink' in module) module.onLink(link);
+            await new Promise((resolve, reject) => socket.onopen = () => resolve(socket));
+            const api = await link.request(new Authenicate(''));
+            if ('onLink' in module) module.onLink(api);
         }
         catch(err) {
             console.log(err);
@@ -165,15 +166,16 @@ export class Connection {
 
 
 /** Link to a server via Websocket (at the moment)*/
-export async function link (uri) {
+export async function link (uri, api) {
     uri = new URL (uri, location.origin);
     if (!/(.js)|(.mjs)$/.test(uri.pathname)) throw new Error('can only link to a javascript module');
-    if (uri.protocol === 'ws:' || uri.protocol === 'wss:') {
-        const socket = new WebSocket(uri);
-        await new Promise((resolve, reject) => socket.onopen = () => resolve(socket));
-        const connection = new Connection(socket);
-        return connection.request(new Authenicate('password'));
-    }   
+    if (new URL(location.origin).protocol === 'http:') uri.protocol = 'ws:';
+    else if (new URL(location.origin).protocol === 'https:') uri.protocol = 'wss:';
+    else throw new Error (`invalid protocol "${uri.protocol}"`)
+    const socket = new WebSocket(uri);
+    await new Promise((resolve, reject) => socket.onopen = () => resolve(socket));
+    const connection = new Connection(socket, api);
+    return connection.request(new Authenicate('password'));
 }
 
 /**
