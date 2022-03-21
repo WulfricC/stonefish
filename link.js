@@ -1,20 +1,18 @@
 import {Request, Response, Deref, Authenicate, Resolve, Message, Reject as Reject} from './message.js';
-import { type } from '../rob/encodings.js';
 import { any, extern } from '../rob/encodings.js';
 import { ExternScheme } from '../rob/scheme-handler.js';
-import { apply, get, Pipe, PipeNode, _IN, _PREV } from './sendable-pipe.js';
 import { ExternHandler, COMMUNICATION_SCHEMES } from '../rob/extern-handler.js';
 import { Read, Write } from '../rob/reader-writer.js';
 import { bufferString, randomInt } from '../utils/mod.js';
-import { ChainToPipeHandler } from './sendable-pipe.js';
+import { ChainToPipeHandler, set, deleteProperty, apply, get, Pipe, PipeNode, _IN, _PREV  } from './sendable-pipe.js';
 import '../rob/built-ins.js'
-import { BiMap } from '../utils/bi-map.js';
 import { _Error, _Null, _Number, _Object, _String, _Undefined } from '../rob/built-ins.js';
+import { Always, Never } from './authenticator.js';
 
 export const moduleURL = import.meta.url;
 
 /** Add 'module' to show modules being sent, add 'buffer' to show raw data. */
-const DEBUG = [];
+const DEBUG = ['buffer'];
 
 /** An object which is sent as a link rather than as iteslf. (Any extern('link') encoding will send as a link however)*/
 export class Linkable {
@@ -39,8 +37,9 @@ export class Linked extends ChainToPipeHandler{
 
 /** Server handler for linking remote modules. */
 export class RemoteModuleLinker {
-    constructor({fileRoot = './'} = {}) {
+    constructor({fileRoot = './', authenticator = new Always()} = {}) {
         this.fileRoot = fileRoot;
+        this.authenticator = authenticator;
     }
     route (request){
         return request.method === 'GET'
@@ -49,12 +48,20 @@ export class RemoteModuleLinker {
     async onRequest (request, respondWith) {
         const {socket, response} = Deno.upgradeWebSocket(request);
         try {
-            const module = await import(request.url);
-            const link = new Connection(socket, new Linkable(module));
+            const url = new URL(request.url);
+            const fileUrl = (url.host === 'localhost' && globalThis.Deno 
+                ? 'file://' + ('/' + Deno.cwd().replaceAll('\\', '/')).replace('//', '/') + url.pathname
+                : uri.replace(/^\w+:/g, 'http:')).replace(/#.*/, '');
+            const module = await import(fileUrl);
+            const link = new Connection(socket, new Linkable(module), this.authenticator);
             respondWith(response);
-            await new Promise((resolve, reject) => socket.onopen = () => resolve(socket));
-            const api = await link.request(new Authenicate(''));
-            if ('onLink' in module) module.onLink(api);
+            socket.onopen = async () => {
+                try {
+                    const api = await link.request(new Authenicate(''));
+                    if ('onLink' in module) module.onLink(api);
+                }
+                catch (err) {};
+            }
         }
         catch(err) {
             console.log(err);
@@ -99,13 +106,14 @@ const MESSAGING_HEAD = [
     _String, _Number, _Object, _Error, _Null, _Undefined,
     Message, Authenicate, Request, Response, Resolve,
     Linked, Linkable, 
-    Pipe, PipeNode, _PREV, _IN, get, apply
+    Pipe, PipeNode, _PREV, _IN, get, apply, set, deleteProperty,
 ];
 
 /** Object which handles a connnection over some interface via ROB.  ConnectionInterface must implement onmessage and send */
 export class Connection {
-    constructor(connectionInterface, api, authenticator = ) {
+    constructor(connectionInterface, api, authenticator = new Always()) {
         this.authenticator = authenticator;
+        this.authenticated = false;
         this.connectionInterface = connectionInterface;
         this.api = api;
         this.connectionInterface.onmessage = (e) => this.recieve(e.data);
@@ -151,18 +159,30 @@ export class Connection {
             this.externHandler.clear(message.uri);
         }
         if (message instanceof Resolve) {
-            try {
-                const result = message.resolver.resolve(message.input);
-                this.send(message.response(result));
+            if (this.authenticated) {
+                try {
+                    const result = message.resolver.resolve(message.input);
+                    this.send(message.response(result));
+                }
+                catch(err) {
+                    this.send(message.error(err));
+                }
             }
-            catch(err) {
-                this.send(message.error(err));
+            else {
+                await this.send(message.error(new Error(`connection is not authenticated`)));
+                this.connectionInterface.close();
             }
             return;
         }
         if (message instanceof Authenicate) {
-            if()
-            this.send(message.response(this.api));
+            if(this.authenticator.authencicate(message.key)) {
+                await this.send(message.response(this.api));
+                this.authenticated = true;
+            }
+            else {
+                await this.send(message.error(new Error(`could not authenticate`)));
+                this.connectionInterface.close();
+            }
             return;
         }
     }
@@ -193,8 +213,6 @@ export async function link (uri, api) {
 /**
 Small Example:
 const {link} = await import('./stonefish/link.js');
-const l = await link('ws://localhost/app/test.js');
-const t = await l.new({a:1, new : 10000});
-console.log(await t.new);
-console.log('done')
+const link = await link('./stonefish/test.js');
+await link.log('hello world');
  */

@@ -35,7 +35,12 @@ export class Server {
         for await (const {request, respondWith} of Deno.serveHttp(conn)) {
             for (const handler of this.routers) {
                 if (handler.route(request)) {
-                    handler.onRequest(request, respondWith);
+                    try {
+                        await handler.onRequest(request, respondWith);
+                    }
+                    catch(err) {
+                        return new Response(err.toString(), {status : 500})
+                    }
                     break;
                 }
             }

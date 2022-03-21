@@ -5,3 +5,9 @@ export class Always extends Authenicator {
         return true;
     }
 }
+
+export class Never extends Authenicator {
+    authencicate(key) {
+        return false;
+    }
+}
