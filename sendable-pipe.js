@@ -143,6 +143,10 @@ export class ChainToPipeHandler {
             if (this.pipe.length === 0) return undefined;
             else return async (resolve = v=>v) => resolve(await this.resolve(this.pipe));
         }
+        if (property === 'catch') {
+            if (this.pipe.length === 0) return undefined;
+            else return async (resolve = v=>v) => resolve(await this.resolve(this.pipe));
+        }
         if (property in this.#cache)
             return this.#cache[property];
         const subnode = this.sub(get, IN, property);

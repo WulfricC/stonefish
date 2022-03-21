@@ -127,8 +127,8 @@ export class Connection {
             const writer = new Write(this.externHandler, MESSAGING_HEAD);
             any(writer)(data);
             const buffer = writer.toBuffer();
-            if (DEBUG.includes('message')) console.log('<<<', data);
-            if (DEBUG.includes('buffer')) console.log('<<<',buffer.byteLength, ' ', bufferString(buffer));
+            if (DEBUG.includes('message')) console.log('🌐<🖥️', data);
+            if (DEBUG.includes('buffer')) console.log('🌐<🖥️',buffer.byteLength, ' ', bufferString(buffer));
             this.connectionInterface.send(buffer);
         }
         catch(err) {
@@ -143,8 +143,8 @@ export class Connection {
             buffer = await data.arrayBuffer();
         const reader = new Read(this.externHandler, buffer, MESSAGING_HEAD);
         const message = await any(reader)();
-        if (DEBUG.includes('message')) console.log('>>>', message);
-        if (DEBUG.includes('buffer')) console.log('>>>',buffer.byteLength, ' ', bufferString(buffer));
+        if (DEBUG.includes('message')) console.log('🌐>🖥️', message);
+        if (DEBUG.includes('buffer')) console.log('🌐>🖥️',buffer.byteLength, ' ', bufferString(buffer));
         if (message instanceof Response) {
             this.unresolvedPromises.get(message.id).resolve(message.value);
             this.unresolvedPromises.delete(message.id);
@@ -165,6 +165,7 @@ export class Connection {
                     this.send(message.response(result));
                 }
                 catch(err) {
+                    console.log('pipeError', message.resolver)
                     this.send(message.error(err));
                 }
             }
