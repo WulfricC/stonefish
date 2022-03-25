@@ -224,10 +224,11 @@ export class Connection {
 
 /** Link to a server via Websocket (at the moment)*/
 export async function link (uri, api) {
-    uri = new URL (uri, location.origin);
+    const loc = location?.origin ?? import.meta.url;
+    uri = new URL (uri, loc);
     if (!/(.js)|(.mjs)$/.test(uri.pathname)) throw new Error('can only link to a javascript module');
-    if (new URL(location.origin).protocol === 'http:') uri.protocol = 'ws:';
-    else if (new URL(location.origin).protocol === 'https:') uri.protocol = 'wss:';
+    if (new URL(loc).protocol === 'http:') uri.protocol = 'ws:';
+    else if (new URL(loc).protocol === 'https:') uri.protocol = 'wss:';
     else throw new Error (`invalid protocol "${uri.protocol}"`)
     const socket = new WebSocket(uri);
     await new Promise((resolve, reject) => socket.onopen = () => resolve(socket));
