@@ -1,42 +1,42 @@
 import { extern } from '../rob/encodings/reference-encodings.js';
 import { randomInt } from '../utils/random-utils.js';
-import { moduleURL, Pipe, IN, PREV } from './sendable-pipe';
+import { Pipe, IN, PREV } from './sendable-pipe.js';
+
+export const moduleURL = import.meta.url;
 
 /** Get a value (esmod: refrerenceable). */
-
 export function get(object, key) {
     return object[key];
 }
 get.moduleURL = moduleURL;
-/** Run a function on an object (esmod: refrerenceable). */
 
+/** Run a function on an object (esmod: refrerenceable). */
 export function apply(func, thisArg, ...args) {
     if (typeof func !== 'function')
         throw new TypeError('attepting to call non function');
     return func.apply(thisArg, args);
 }
 apply.moduleURL = moduleURL;
-/**Set a value an object (esmod: refrerenceable). */
 
+/**Set a value an object (esmod: refrerenceable). */
 export function set(object, key, value) {
     return object[key] = value;
 }
 set.moduleURL = moduleURL;
-/**Get the typeof the result of a pipe (esmod: refrerenceable). */
 
+/**Get the typeof the result of a pipe (esmod: refrerenceable). */
 export function typeOf(object) {
     return typeof object;
 }
 typeOf.moduleURL = moduleURL;
-/** Delete a property of an object (esmod: refrerenceable). */
 
+/** Delete a property of an object (esmod: refrerenceable). */
 export function deleteProperty(object, key) {
     return delete object[key];
 }
 deleteProperty.moduleURL = moduleURL;
+
 /** proxy handler which converts a chain into a pipe */
-
-
 export class ChainToPipeHandler {
     static moduleURL = moduleURL;
     static encoding = extern('link');

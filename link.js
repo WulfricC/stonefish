@@ -5,7 +5,7 @@ import { ExternHandler, COMMUNICATION_SCHEMES } from '../rob/extern-handler.js';
 import { Read, Write } from '../rob/reader-writer.js';
 import { bufferString, randomInt } from '../utils/mod.js';
 import { Pipe, PipeNode, _IN, _PREV  } from './sendable-pipe.js';
-import { ChainToPipeHandler, set, deleteProperty, apply, get } from "./chain-to-pipe";
+import { ChainToPipeHandler, set, deleteProperty, apply, get } from "./chain-to-pipe.js";
 import '../rob/built-ins.js'
 import { _Error, _Null, _Number, _Object, _String, _Undefined } from '../rob/built-ins.js';
 import { Always, Never } from './authenticator.js';
