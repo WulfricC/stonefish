@@ -2,11 +2,11 @@
  * small console based chat app
  * if stonefish server running on localhost when serving stonefish
  * run using
- * deno run --allow-net -r http://localhost/stonefish/test.js
+ * deno run --allow-net -q http://localhost/stonefish/test.js
  */
 
 import {link, Linkable} from './link.js';
-import {readLines} from 'https://deno.land/std/io/bufio.ts';
+import {readLines} from 'https://deno.land/std@0.109.0/io/bufio.ts';
 
 // set of all connected linked log functions
 const linkedLogs = new Set();
@@ -25,28 +25,23 @@ const colors = {
 }
 
 // log a value to console and all connections
-export async function log (value) {
-    consoleWrite(`\r\x1B[0K${value}${reset}`);
+export async function log(value) {
     for(const log of linkedLogs) {
-        await log(value).catch(v=>'')
+        await log(value).catch(v=>disconnect(log));
     }
 }
-log.moduleURL = import.meta.url;
 
 // connect another logFunction
 export async function connect (logFunction) {
     linkedLogs.add(logFunction);
 }
 
+// disconnect 
+export async function disconnect (logFunction) {
+    linkedLogs.delete(logFunction);
+}
+
 // some console printing functions
-export function writePrompt(color, name) {
-    Deno.writeAllSync(Deno.stdout, new TextEncoder().encode(`\n${color}${name}> `));
-}
-
-export function deleteLine() {
-    Deno.writeAllSync(Deno.stdout, new TextEncoder().encode("\r\x1B[1A"));
-}
-
 export function consoleWrite(text) {
     Deno.writeAllSync(Deno.stdout, new TextEncoder().encode(text));
 }
@@ -67,18 +62,12 @@ if (globalThis.Deno && Deno.mainModule === import.meta.url) {
 
     // connect to the server
     const server = await link(import.meta.url);
-    await server.connect(new Linkable(log));
+    await server.connect(new Linkable((text) => {consoleWrite(`\u001b[0G\u001b[J${text}\n${color}${name}> `);}));
     await server.log(`${color}[${name} joined the chat]${reset}`);
 
     // log via server to all connections on server when entered
-    writePrompt()
     for await (const input of readLines(Deno.stdin)) {
-        deleteLine();
+        consoleWrite("\r\u001b[1A");
         await server.log(`${color}[${name}] ${input}`);
-        writePrompt(color, name);
     }
-
-}
-else {
-    throw new Error(`the console chat example only works on Deno`);
 }
