@@ -1,5 +1,5 @@
 import {Request, Response, Deref, Authenicate, Resolve, Message, Reject as Reject} from './message.js';
-import { any, extern } from '../rob/encodings.js';
+import { any, extern, type } from '../rob/encodings.js';
 import { ExternScheme } from '../rob/scheme-handler.js';
 import { ExternHandler, COMMUNICATION_SCHEMES } from '../rob/extern-handler.js';
 import { Read, Write } from '../rob/reader-writer.js';
@@ -17,6 +17,10 @@ const DEBUG = ['buffer'];
 /** An object which is sent as a link rather than as iteslf. (Any extern('link') encoding will send as a link however)*/
 export class Linkable {
     constructor (object) {
+        if (typeof object === 'function') {
+            this.apply = (f,t,a) => object.apply(f,t,a);
+            return this;
+        }
         Object.assign(this, object);
     }
     static moduleURL = moduleURL;
@@ -57,8 +61,8 @@ export class RemoteModuleLinker {
             respondWith(response);
             socket.onopen = async () => {
                 try {
-                    const api = await link.request(new Authenicate(''));
-                    if ('onLink' in module) module.onLink(api);
+                    //const api = await link.request(new Authenicate(''));
+                    if ('onLink' in module) module.onLink(link);
                 }
                 catch (err) {};
             }
@@ -76,24 +80,38 @@ export class LinkScheme extends ExternScheme {
         super();
         this.connection = connection;
         this.itemCache = new Map();
+
         this.uriCache = new WeakMap();
+
+        this.remoteCache = new Map();
+
         this.registry = new FinalizationRegistry(heldValue => {
             this.connection.send(new Deref(heldValue));
         });
     }
     getURI(item) {
+        //console.log(item.constructor === Linked, item, this.uriCache.get(item));
         if (item.constructor === Linked)
             return this.uriCache.get(item);
+        if (this.uriCache.has(item)) {
+            return this.uriCache.get(item);
+        }
         const uri = `link:${randomInt().toString(32)}`;
         this.itemCache.set(uri, item);
+        this.uriCache.set(item, uri);
         return uri;
     }
     getItem(uri) {
         if (this.itemCache.has(uri))
             return this.itemCache.get(uri);
+        if (this.remoteCache.has(uri)) {
+            return this.remoteCache.get(uri).deref();
+        }
         const linked = new Linked(this.connection, uri);
+        //console.log(linked, uri)
         this.registry.register(linked, uri);
         this.uriCache.set(linked, uri);
+        this.remoteCache.set(uri, new WeakRef(linked));
         return linked;
     }
     clear(uri) {
@@ -111,15 +129,22 @@ const MESSAGING_HEAD = [
 
 /** Object which handles a connnection over some interface via ROB.  ConnectionInterface must implement onmessage and send */
 export class Connection {
-    constructor(connectionInterface, api, authenticator = new Always()) {
+    constructor(connectionInterface, api = {}, authenticator = new Always()) {
         this.authenticator = authenticator;
         this.authenticated = false;
         this.connectionInterface = connectionInterface;
         this.api = api;
         this.connectionInterface.onmessage = (e) => this.recieve(e.data);
+
+        this.closers = [];
+        this.connectionInterface.onclose = (e) => {for(const func of this.closers) func()};
+
         this.unresolvedPromises = new Map();
         this.instances = new Map();
         this.externHandler = new ExternHandler({...COMMUNICATION_SCHEMES, link: new LinkScheme(this)});
+    }
+    async authenticate(token = '') {
+        return await this.request(new Authenicate(token));
     }
     /**send some data as rob*/
     async send(data) {
@@ -159,19 +184,13 @@ export class Connection {
             this.externHandler.clear(message.uri);
         }
         if (message instanceof Resolve) {
-            if (this.authenticated) {
-                try {
-                    const result = message.resolver.resolve(message.input);
-                    this.send(message.response(result));
-                }
-                catch(err) {
-                    console.log('pipeError', message.resolver)
-                    this.send(message.error(err));
-                }
+            try {
+                const result = await message.resolver.resolve(message.input);
+                this.send(message.response(result));
             }
-            else {
-                await this.send(message.error(new Error(`connection is not authenticated`)));
-                this.connectionInterface.close();
+            catch(err) {
+                console.log('pipeError', message.resolver)
+                this.send(message.error(err));
             }
             return;
         }
@@ -194,6 +213,10 @@ export class Connection {
         const promise = new Promise((resolve, reject) => this.unresolvedPromises.set(request.id,{resolve, reject}));
         await this.send(request);
         return promise;
+    }
+    /**handle disconnect */
+    addCloser(closer) {
+        this.closers.push(closer);
     }
 }
 

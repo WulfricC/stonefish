@@ -7,7 +7,13 @@ const clients = new Set();
 export async function log (value) {
     console.log(value);
     for(const log of clients) {
-        await log(value).catch(e => '')
+        try {
+            await log(value);
+        }
+        catch (err){
+            if (err.name === 'InvalidStateError')
+                clients.delete();
+        }
     }
 }
 log.moduleURL = import.meta.url;
@@ -22,8 +28,8 @@ export async function disconnect (client) {
 }
 
 export async function main() {
-    const server = await link('./stonefish/test.js');
+    const server = await link('./stonefish/server-ui.js');
     await server.connect(new Linkable(log));
     await server.log('connected');
-    return server.log.packed;
+    return server.log.pack;
 }

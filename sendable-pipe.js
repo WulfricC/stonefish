@@ -4,6 +4,7 @@ import { constant, float64 } from '../rob/encodings.js';
 import { setAlias } from '../rob/alias.js';
 import { _Error, _Null, _Number, _Object, _String, _Undefined } from '../rob/built-ins.js';
 import { checkEsmod } from '../rob/esmod.js';
+import { randomInt } from '../utils/random-utils.js';
 
 const moduleURL = import.meta.url;
 
@@ -108,6 +109,12 @@ export function set(object, key, value) {
 }
 set.moduleURL = moduleURL;
 
+/**Get the typeof the result of a pipe (esmod: refrerenceable). */
+export function typeOf(object) {
+    return typeof object;
+}
+typeOf.moduleURL = moduleURL;
+
 /** Delete a property of an object (esmod: refrerenceable). */
 export function deleteProperty(object, key) {
     return delete object[key];
@@ -120,9 +127,10 @@ export class ChainToPipeHandler {
     static moduleURL = moduleURL;
     static encoding = extern('link');
     #cache = {};
-    constructor (pipe = new Pipe(), resolve = pipe => pipe.resolve()) {
+    constructor (pipe = new Pipe(), resolve = async pipe => pipe.resolve()) {
         this.pipe = pipe;
         this.resolve = resolve;
+        this.randId = randomInt().toString(32);
     }
     sub (...args) {
         return new Proxy(()=>{}, new ChainToPipeHandler(this.pipe.pipe(...args), this.resolve));
@@ -132,7 +140,7 @@ export class ChainToPipeHandler {
     }
     toPrimitive (hint) {
         if (hint === 'string' || hint === 'default')
-            return this.pipe.toString();
+            return `<linked ${this.randId}>`;
         if (hint === 'number')
             return NaN;
     }
@@ -141,11 +149,14 @@ export class ChainToPipeHandler {
         if (property === 'constructor') return this.constructor;
         if (property === 'then') {
             if (this.pipe.length === 0) return undefined;
-            else return async (resolve = v=>v) => resolve(await this.resolve(this.pipe));
+            else return async (success, failure) => this.resolve(this.pipe).then(success,failure);
         }
         if (property === 'catch') {
             if (this.pipe.length === 0) return undefined;
-            else return async (resolve = v=>v) => resolve(await this.resolve(this.pipe));
+            else return async (callback) => this.resolve(this.pipe).then().catch(callback);
+        }
+        if (property === 'packed') {
+            return async (...args) => await this.proxy()(...args);
         }
         if (property in this.#cache)
             return this.#cache[property];
@@ -163,5 +174,8 @@ export class ChainToPipeHandler {
     deleteProperty (target, property, value) {
         const subnode = this.sub(deleteProperty, IN, property, value);
         return subnode.then();
+    }
+    throw(err) {
+        throw err;
     }
 }

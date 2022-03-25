@@ -2,13 +2,13 @@
 
 ## Link
 
-Neaten linking library
-allow to actually link to files now
-add "main()" and "onconnect()"
+Add some sort of cleanup of the internal map of the link scheme handler.
+Add some intuitve method for cleaning up if disconnected.
+Fix linking to modules as a whole.
 
 ## Server
 
-change the server routing rules to make more sense somehow.  Probably with the objects themselves containing route handling.  Allow for more complex route handling and allow routehandlers to cover the same area.
+
 
 ## ExternHandler
 
