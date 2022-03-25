@@ -1,5 +1,12 @@
+/**
+ * small console based chat app
+ * if stonefish server running on localhost when serving stonefish
+ * run using
+ * deno run --allow-net -r http://localhost/stonefish/test.js
+ */
+
 import {link, Linkable} from './link.js';
-import {readLines} from ('https://deno.land/std/io/bufio.ts');
+import {readLines} from 'https://deno.land/std/io/bufio.ts';
 
 // set of all connected linked log functions
 const linkedLogs = new Set();
