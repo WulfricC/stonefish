@@ -4,7 +4,8 @@ import { ExternScheme } from '../rob/scheme-handler.js';
 import { ExternHandler, COMMUNICATION_SCHEMES } from '../rob/extern-handler.js';
 import { Read, Write } from '../rob/reader-writer.js';
 import { bufferString, randomInt } from '../utils/mod.js';
-import { ChainToPipeHandler, set, deleteProperty, apply, get, Pipe, PipeNode, _IN, _PREV  } from './sendable-pipe.js';
+import { Pipe, PipeNode, _IN, _PREV  } from './sendable-pipe.js';
+import { ChainToPipeHandler, set, deleteProperty, apply, get } from "./chain-to-pipe";
 import '../rob/built-ins.js'
 import { _Error, _Null, _Number, _Object, _String, _Undefined } from '../rob/built-ins.js';
 import { Always, Never } from './authenticator.js';
@@ -12,7 +13,7 @@ import { Always, Never } from './authenticator.js';
 export const moduleURL = import.meta.url;
 
 /** Add 'module' to show modules being sent, add 'buffer' to show raw data. */
-const DEBUG = ['buffer'];
+const DEBUG = [];
 
 /** An object which is sent as a link rather than as iteslf. (Any extern('link') encoding will send as a link however)*/
 export class Linkable {
@@ -26,6 +27,7 @@ export class Linkable {
     static moduleURL = moduleURL;
     static encoding = extern('link');
 }
+
 
 /** An object which references a remotely linked object. */
 export class Linked extends ChainToPipeHandler{
@@ -189,7 +191,6 @@ export class Connection {
                 this.send(message.response(result));
             }
             catch(err) {
-                console.log('pipeError', message.resolver)
                 this.send(message.error(err));
             }
             return;
