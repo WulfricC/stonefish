@@ -1,4 +1,4 @@
-import {Request, Response, Deref, Authenicate, Resolve, Message, Reject as Reject} from './message.js';
+import { Request, Response, Deref, Authenicate, Resolve, Message, Reject as Reject } from './message.js';
 import { any, extern, type } from '../rob/encodings.js';
 import { ExternScheme } from '../rob/scheme-handler.js';
 import { ExternHandler, COMMUNICATION_SCHEMES } from '../rob/extern-handler.js';
@@ -55,9 +55,13 @@ export class RemoteModuleLinker {
         const {socket, response} = Deno.upgradeWebSocket(request);
         try {
             const url = new URL(request.url);
-            const fileUrl = (url.host === 'localhost' && globalThis.Deno 
-                ? 'file://' + ('/' + Deno.cwd().replaceAll('\\', '/')).replace('//', '/') + url.pathname
-                : uri.replace(/^\w+:/g, 'http:')).replace(/#.*/, '');
+            //this code prevents loading code files from remote urls.... consider changing...
+            const fileUrl = url.toString().replace(/^\w+:/g, 'http:').replace(/#.*/, '');
+            //const fileUrl = (url.host === 'localhost' && globalThis.Deno 
+            //    ? 'file://' + ('/' + Deno.cwd().replaceAll('\\', '/')).replace('//', '/') + url.pathname
+            //    : uri.replace(/^\w+:/g, 'http:')).replace(/#.*/, '');
+            // this fetches the file from the server itself... ensuring all routing etc is done correctly, however
+            // some ROB stuff will likley be messed up.
             const module = await import(fileUrl);
             const link = new Connection(socket, new Linkable(module), this.authenticator);
             respondWith(response);
@@ -231,7 +235,12 @@ export async function link (uri, api) {
     else if (new URL(loc).protocol === 'https:') uri.protocol = 'wss:';
     else throw new Error (`invalid protocol "${uri.protocol}"`)
     const socket = new WebSocket(uri);
-    await new Promise((resolve, reject) => socket.onopen = () => resolve(socket));
+    await new Promise(
+        (resolve, reject) => {
+            socket.onopen = () => resolve(socket);
+            socket.onerror = () => reject(socket);
+            }
+        );
     const connection = new Connection(socket, api);
     return connection.request(new Authenicate('password'));
 }

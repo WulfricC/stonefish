@@ -48,7 +48,7 @@ export function consoleWrite(text) {
 
 // module runs as client side app if it is run in Deno by itself
 if (globalThis.Deno && Deno.mainModule === import.meta.url) {
-
+    
     // get the user's name
     let name = prompt('what is your name?');
     

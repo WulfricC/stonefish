@@ -54,6 +54,7 @@ export class ChainToPipeHandler {
         return new Proxy(() => { }, this);
     }
     toPrimitive(hint) {
+        // this should really be moved to the Linked class
         if (hint === 'string' || hint === 'default')
             return `<linked ${this.randId}>`;
         if (hint === 'number')

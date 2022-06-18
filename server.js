@@ -9,6 +9,11 @@ import {existsSync, } from "https://deno.land/std@0.109.0/fs/mod.ts";
 import {posix} from "https://deno.land/std@0.109.0/path/mod.ts";
 //import { AllowAll } from './permissions.js';
 
+//globalThis.import = async function (uri) {
+//    console.log('IMPORT', uri);
+//    return import(uri);
+//}
+
 const statSync = Deno.statSync;
 
 export class Server {
@@ -21,6 +26,7 @@ export class Server {
     }   
     
     route(handler) {
+        console.log('routing');
         if (this.listening) throw new Error(`Cannot add routes once listening`)
         this.routers.push(handler);
         return this;
@@ -105,4 +111,54 @@ export class StaticFileHandler {
         // if no file is found, return a 404s
         return new Response(null, {status : 404, headers : {Location: path, 'Referrer-Policy': 'no-referrer'}})
     }
+}
+
+/** Handle files from a url as if they are local*/
+export class WebProxyHandler {
+    constructor({
+            urlRoot = '.',
+            webURL = 'http://clackson.com',
+            cors = true,
+                } = {}) {
+        this.webURL = webURL;
+        this.cors = cors;
+        this.urlRoot = urlRoot;
+    }
+    route (request){
+        return request.method === 'GET'
+            && !request.headers.has('upgrade')
+    }
+    async onRequest (request, respondWith) {
+        respondWith(this.onGet(request));
+        //respondWith (new Response(null, {status : 301, headers :{Location: urlPath + '/'}}))
+    }    
+    async onGet (request) {
+        // config
+        const urlPath = new URL(request.url).pathname;
+        const remoteWebLocation = this.webURL + urlPath;
+        const remoteRes = await fetch(remoteWebLocation);
+        console.log(remoteWebLocation);
+        function copyHeader (headerName, to, from) {
+            const hdrVal = from.get(headerName);
+            if (hdrVal) {
+              to.set(headerName, hdrVal);
+            }
+          };
+        const headers = new Headers();
+        copyHeader("content-length", headers, remoteRes.headers);
+        copyHeader("content-type", headers, remoteRes.headers);
+        copyHeader("content-disposition", headers, remoteRes.headers);
+        return new Response(remoteRes.body, {
+            status: remoteRes.status,
+            headers,
+          });
+        /*
+        // if no file is found, return a 404s
+        return new Response(null, {status : 404, headers : {Location: path, 'Referrer-Policy': 'no-referrer'}})
+        */
+    }
+}
+
+export class Else404Handler {
+
 }
