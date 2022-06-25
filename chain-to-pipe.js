@@ -3,6 +3,9 @@ import { randomInt } from '../utils/random-utils.js';
 import { Linkable } from './link.js';
 import { Pipe, IN, PREV } from './sendable-pipe.js';
 
+//** constants that are used in the definitions of chain to pipes */
+export const HANDLER = Symbol('handler');
+
 export const moduleURL = import.meta.url;
 
 /** Get a value (esmod: refrerenceable). */
@@ -46,23 +49,24 @@ export class ChainToPipeHandler {
         this.pipe = pipe;
         this.resolve = resolve;
         this.randId = randomInt().toString(32);
+        this.proxy = new Proxy(() => { }, this);
     }
     sub(...args) {
-        return new Proxy(() => { }, new ChainToPipeHandler(this.pipe.pipe(...args), this.resolve));
-    }
-    proxy() {
-        return new Proxy(() => { }, this);
+        return new ChainToPipeHandler(this.pipe.pipe(...args), this.resolve);
+        //return new Proxy(() => { }, new ChainToPipeHandler(this.pipe.pipe(...args), this.resolve));
     }
     toPrimitive(hint) {
-        // this should really be moved to the Linked class
         if (hint === 'string' || hint === 'default')
-            return `<linked ${this.randId}>`;
+            return `<chain-to-pipe ${this.randId}>`;
         if (hint === 'number')
             return NaN;
     }
     get(target, property) {
         if (property === Symbol.toPrimitive)
             return this.toPrimitive.bind(this);
+        if (property === HANDLER) {
+            return this;
+        }
         if (property === 'constructor')
             return this.constructor;
         if (property === 'then') {
@@ -78,23 +82,23 @@ export class ChainToPipeHandler {
                 return async (callback) => this.resolve(this.pipe).then().catch(callback);
         }
         if (property === 'packed') {
-            return async (...args) => await this.proxy()(...args);
+            return async (...args) => await this.proxy(...args);
         }
         if (property in this.#cache)
             return this.#cache[property];
-        const subnode = this.sub(get, IN, property);
+        const subnode = this.sub(get, IN, property).proxy;
         this.#cache[property] = subnode;
         return subnode;
     }
     apply(target, thisArg, args) {
-        return this.sub(apply, IN, PREV, ...args);
+        return this.sub(apply, IN, PREV, ...args).proxy;
     }
     set(target, property, value) {
-        const subnode = this.sub(set, IN, property, value);
+        const subnode = this.sub(set, IN, property, value).proxy;
         return subnode.then();
     }
     deleteProperty(target, property, value) {
-        const subnode = this.sub(deleteProperty, IN, property, value);
+        const subnode = this.sub(deleteProperty, IN, property, value).proxy;
         return subnode.then();
     }
     throw(err) {

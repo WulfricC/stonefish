@@ -42,7 +42,7 @@ export class Request extends Message {
     }
 }
 
-export class Authenicate extends Request {
+export class Authenticate extends Request {
     static moduleURL = moduleURL;
     static encoding = struct(this, {id: float64, key: utf16});
     constructor(key) {

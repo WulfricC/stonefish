@@ -5,11 +5,12 @@
  * deno run --allow-net -q http://localhost/stonefish/chat-example.js
  */
 
-import {link, Linkable} from './link.js';
+import {link, Linkable, connect as linkConnect} from './link.js';
+import { HANDLER } from './chain-to-pipe.js';
 import {readLines} from 'https://deno.land/std@0.109.0/io/bufio.ts';
 
 // set of all connected linked log functions
-const linkedLogs = new Set();
+const linkedLogs = new Map();
 
 // reset escape code
 const reset = '\u001b[0m';
@@ -26,19 +27,26 @@ const colors = {
 
 // log a value to console and all connections
 export async function log(value) {
-    for(const log of linkedLogs) {
+    
+    for(const log of linkedLogs.values()) {
+        console.log(log[HANDLER]);
         await log(value).catch(v=>disconnect(log));
     }
 }
 
+// locally log
+export async function serverlog(value) {
+    console.log(value);
+}
+
 // connect another logFunction
-export async function connect (logFunction) {
-    linkedLogs.add(logFunction);
+export async function connect (name, logFunction) {
+    linkedLogs.set(name, logFunction);
 }
 
 // disconnect 
-export async function disconnect (logFunction) {
-    linkedLogs.delete(logFunction);
+export async function disconnect (name) {
+    linkedLogs.delete(name);
 }
 
 // some console printing functions
@@ -51,7 +59,7 @@ if (globalThis.Deno && Deno.mainModule === import.meta.url) {
     
     // get the user's name
     let name = prompt('what is your name?');
-    
+
     // get a color for the user
     let color = undefined;
     while(color === undefined) {
@@ -61,10 +69,13 @@ if (globalThis.Deno && Deno.mainModule === import.meta.url) {
     }
 
     // connect to the server
-    const server = await link(import.meta.url);
-    await server.connect(new Linkable((text) => consoleWrite(`\u001b[0G\u001b[J${text}\n${color}${name}> `)));
+    console.log('connecting to the server')
+    const server = await link(import.meta.url,undefined,undefined,undefined,undefined,v => console.log('CLOSED'));
+    await server.connect(name, new Linkable((text) => consoleWrite(`\u001b[0G\u001b[J${text}\n${color}${name}> `)));
+    await server.serverlog(server);
+    //console.log(server.connect[HANDLER])
     await server.log(`${color}[${name} joined the chat]${reset}`);
-
+    console.log(linkConnect.connections);
     // log via server to all connections on server when entered
     for await (const input of readLines(Deno.stdin)) {
         consoleWrite("\r\u001b[1A");

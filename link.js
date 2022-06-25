@@ -1,4 +1,4 @@
-import { Request, Response, Deref, Authenicate, Resolve, Message, Reject as Reject } from './message.js';
+import { Request, Response, Deref, Authenticate as Authenticate, Resolve, Message, Reject as Reject } from './message.js';
 import { any, extern, type } from '../rob/encodings.js';
 import { ExternScheme } from '../rob/scheme-handler.js';
 import { ExternHandler, COMMUNICATION_SCHEMES } from '../rob/extern-handler.js';
@@ -12,10 +12,11 @@ import { Always, Never } from './authenticator.js';
 
 export const moduleURL = import.meta.url;
 
+
 /** Add 'module' to show modules being sent, add 'buffer' to show raw data. */
 const DEBUG = [];
 
-/** An object which is sent as a link rather than as iteslf. (Any extern('link') encoding will send as a link however)*/
+/** An object which is sent as a link rather than as iteslf. (Any extern('link') encoding will also send as a link however)*/
 export class Linkable {
     constructor (object) {
         if (typeof object === 'function') {
@@ -33,50 +34,17 @@ export class Linkable {
 export class Linked extends ChainToPipeHandler{
     constructor (connection, uri) {
         super();
-        const proxy = new Proxy(()=>{}, this);
-        this.resolve = async pipe => connection.request(new Resolve(await pipe.awaitAll(), proxy));
-        return proxy;
+        this.resolve = async pipe => connection.request(new Resolve(await pipe.awaitAll(), this.proxy));
     }
+
     static moduleURL = moduleURL;
     static encoding = extern('link');
-}
 
-/** Server handler for linking remote modules. */
-export class RemoteModuleLinker {
-    constructor({fileRoot = './', authenticator = new Always()} = {}) {
-        this.fileRoot = fileRoot;
-        this.authenticator = authenticator;
-    }
-    route (request){
-        return request.method === 'GET'
-            && request.headers.get('upgrade') === 'websocket';
-    }
-    async onRequest (request, respondWith) {
-        const {socket, response} = Deno.upgradeWebSocket(request);
-        try {
-            const url = new URL(request.url);
-            //this code prevents loading code files from remote urls.... consider changing...
-            const fileUrl = url.toString().replace(/^\w+:/g, 'http:').replace(/#.*/, '');
-            //const fileUrl = (url.host === 'localhost' && globalThis.Deno 
-            //    ? 'file://' + ('/' + Deno.cwd().replaceAll('\\', '/')).replace('//', '/') + url.pathname
-            //    : uri.replace(/^\w+:/g, 'http:')).replace(/#.*/, '');
-            // this fetches the file from the server itself... ensuring all routing etc is done correctly, however
-            // some ROB stuff will likley be messed up.
-            const module = await import(fileUrl);
-            const link = new Connection(socket, new Linkable(module), this.authenticator);
-            respondWith(response);
-            socket.onopen = async () => {
-                try {
-                    //const api = await link.request(new Authenicate(''));
-                    if ('onLink' in module) module.onLink(link);
-                }
-                catch (err) {};
-            }
-        }
-        catch(err) {
-            console.log(err);
-            respondWith(new Response(err.toString(), {status : 400}));
-        }
+    toPrimitive(hint) {
+        if (hint === 'string' || hint === 'default')
+            return `<linked ${this.randId}>`;
+        if (hint === 'number')
+            return NaN;
     }
 }
 
@@ -96,7 +64,6 @@ export class LinkScheme extends ExternScheme {
         });
     }
     getURI(item) {
-        //console.log(item.constructor === Linked, item, this.uriCache.get(item));
         if (item.constructor === Linked)
             return this.uriCache.get(item);
         if (this.uriCache.has(item)) {
@@ -113,8 +80,7 @@ export class LinkScheme extends ExternScheme {
         if (this.remoteCache.has(uri)) {
             return this.remoteCache.get(uri).deref();
         }
-        const linked = new Linked(this.connection, uri);
-        //console.log(linked, uri)
+        const linked = new Linked(this.connection, uri).proxy;
         this.registry.register(linked, uri);
         this.uriCache.set(linked, uri);
         this.remoteCache.set(uri, new WeakRef(linked));
@@ -128,10 +94,46 @@ export class LinkScheme extends ExternScheme {
 /** Header to reduce the size of common messages. */
 const MESSAGING_HEAD = [
     _String, _Number, _Object, _Error, _Null, _Undefined,
-    Message, Authenicate, Request, Response, Resolve,
+    Message, Authenticate, Request, Response, Resolve,
     Linked, Linkable, 
     Pipe, PipeNode, _PREV, _IN, get, apply, set, deleteProperty,
 ];
+
+/** Default api used with link*/
+const LINK_API = new Linkable({
+    import: async function(url) {
+        return  import(url);
+    },
+    ping: async function(val) {
+        return val;
+    }
+});
+
+/** Server handler linked apis over webSocket. */
+export class WSLink {
+    constructor({path = '/', authenticator = new Always()} = {}, api = LINK_API) {
+        this.path = path;
+        this.authenticator = authenticator;
+        this.api = api;
+    }
+    route (request){
+        return request.method === 'GET'
+            && request.headers.get('upgrade') === 'websocket'
+            && new URL(request.url).pathname === this.path
+        ;
+    }
+    async onRequest (request, respondWith) {
+        const {socket, response} = Deno.upgradeWebSocket(request);
+        try {
+            new Connection(socket, this.api, this.authenticator);
+            respondWith(response);
+        }
+        catch(err) {
+            console.log(err);
+            respondWith(new Response(err.toString(), {status : 400}));
+        }
+    }
+}
 
 /** Object which handles a connnection over some interface via ROB.  ConnectionInterface must implement onmessage and send */
 export class Connection {
@@ -150,15 +152,15 @@ export class Connection {
         this.externHandler = new ExternHandler({...COMMUNICATION_SCHEMES, link: new LinkScheme(this)});
     }
     async authenticate(token = '') {
-        return await this.request(new Authenicate(token));
+        return await this.request(new Authenticate(token));
     }
     /**send some data as rob*/
     async send(data) {
         try {
             const writer = new Write(this.externHandler, MESSAGING_HEAD);
+            if (DEBUG.includes('message')) console.log('🌐<🖥️', data);
             any(writer)(data);
             const buffer = writer.toBuffer();
-            if (DEBUG.includes('message')) console.log('🌐<🖥️', data);
             if (DEBUG.includes('buffer')) console.log('🌐<🖥️',buffer.byteLength, ' ', bufferString(buffer));
             this.connectionInterface.send(buffer);
         }
@@ -173,9 +175,9 @@ export class Connection {
         if (data instanceof Blob)
             buffer = await data.arrayBuffer();
         const reader = new Read(this.externHandler, buffer, MESSAGING_HEAD);
+        if (DEBUG.includes('buffer')) console.log('🌐>🖥️',buffer.byteLength, ' ', bufferString(buffer));
         const message = await any(reader)();
         if (DEBUG.includes('message')) console.log('🌐>🖥️', message);
-        if (DEBUG.includes('buffer')) console.log('🌐>🖥️',buffer.byteLength, ' ', bufferString(buffer));
         if (message instanceof Response) {
             this.unresolvedPromises.get(message.id).resolve(message.value);
             this.unresolvedPromises.delete(message.id);
@@ -199,10 +201,12 @@ export class Connection {
             }
             return;
         }
-        if (message instanceof Authenicate) {
+        if (message instanceof Authenticate) {
             if(this.authenticator.authencicate(message.key)) {
-                await this.send(message.response(this.api));
                 this.authenticated = true;
+                //const api = await import(message.url);
+                await this.send(message.response(this.api));
+                //auto run onlink?
             }
             else {
                 await this.send(message.error(new Error(`could not authenticate`)));
@@ -226,23 +230,54 @@ export class Connection {
 }
 
 
-/** Link to a server via Websocket (at the moment)*/
-export async function link (uri, api) {
-    const loc = location?.origin ?? import.meta.url;
-    uri = new URL (uri, loc);
-    if (!/(.js)|(.mjs)$/.test(uri.pathname)) throw new Error('can only link to a javascript module');
-    if (new URL(loc).protocol === 'http:') uri.protocol = 'ws:';
-    else if (new URL(loc).protocol === 'https:') uri.protocol = 'wss:';
-    else throw new Error (`invalid protocol "${uri.protocol}"`)
-    const socket = new WebSocket(uri);
-    await new Promise(
-        (resolve, reject) => {
-            socket.onopen = () => resolve(socket);
-            socket.onerror = () => reject(socket);
-            }
-        );
-    const connection = new Connection(socket, api);
-    return connection.request(new Authenicate('password'));
+//** Connect to a server via Websocket, this will just return the open API of the connection */
+export async function connect(socketUrl, key = 'password', api = {}, authencicator = new Never(), onclose = () => {}) {
+    // connect to localhost more directly to speed up connections
+    if (new URL(socketUrl).hostname === 'localhost') {
+        const tempURL = new URL(socketUrl);
+        tempURL.hostname = '127.0.0.1';
+        socketUrl = tempURL.toString();
+    }
+    
+    // if not connected connect
+    if (socketUrl in connect.connections) {
+        return connect.connections[socketUrl];
+    }
+    else {
+        // connect to the server using websocket
+        const socket = new WebSocket(socketUrl);
+
+        // wait for connection
+        await new Promise(
+            (resolve, reject) => {
+                socket.onopen = () => resolve(socket);
+                socket.onerror = () => reject(socket);
+                socket.onclose = (e) => {onclose(e); reject(socket)};
+                }
+            );
+
+        // create a connection
+        const connection = new Connection(socket, api, authencicator);
+        const linked = await connection.request(new Authenticate(key));
+        connect.connections[socketUrl] = connection;
+        return linked;
+    }
+}
+connect.connections = {};
+
+/** Link to a server via Websocket (at the moment), link now connects to a specific socket url, and the url of the file to link to is seperate*/
+export async function link (resourceLocation, socketUrl, key, api, authencicator, onclose) {
+
+    // build the socket url if it has not been defined
+    if (socketUrl === undefined) {
+        const tempURL = new URL(location?.origin ?? import.meta.url);
+        if (tempURL.protocol === 'http:') tempURL.protocol = 'ws:';
+        else if (tempURL.protocol === 'https:') tempURL.protocol = 'wss:';
+        else throw new Error('cannot auto define socket URL');
+        socketUrl = tempURL.origin.toString();
+    }
+    const server = await connect(socketUrl);
+    return server.import(resourceLocation);
 }
 
 /**

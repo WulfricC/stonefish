@@ -26,7 +26,6 @@ export class Server {
     }   
     
     route(handler) {
-        console.log('routing');
         if (this.listening) throw new Error(`Cannot add routes once listening`)
         this.routers.push(handler);
         return this;
@@ -137,7 +136,7 @@ export class WebProxyHandler {
         const urlPath = new URL(request.url).pathname;
         const remoteWebLocation = this.webURL + urlPath;
         const remoteRes = await fetch(remoteWebLocation);
-        console.log(remoteWebLocation);
+        //console.log(remoteWebLocation);
         function copyHeader (headerName, to, from) {
             const hdrVal = from.get(headerName);
             if (hdrVal) {
