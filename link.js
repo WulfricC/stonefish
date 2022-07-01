@@ -1,20 +1,35 @@
 import { Request, Response, Deref, Authenticate as Authenticate, Resolve, Message, Reject as Reject } from './message.js';
-import { any, extern, type } from '../rob/encodings.js';
+import { any, extern, type, struct, utf16, reference, array } from '../rob/encodings.js';
 import { ExternScheme } from '../rob/scheme-handler.js';
 import { ExternHandler, COMMUNICATION_SCHEMES } from '../rob/extern-handler.js';
 import { Read, Write } from '../rob/reader-writer.js';
 import { bufferString, randomInt } from '../utils/mod.js';
-import { Pipe, PipeNode, _IN, _PREV  } from './sendable-pipe.js';
-import { ChainToPipeHandler, set, deleteProperty, apply, get } from "./chain-to-pipe.js";
 import '../rob/built-ins.js'
-import { _Error, _Null, _Number, _Object, _String, _Undefined } from '../rob/built-ins.js';
+import { _Array, _Error, _Module, _Null, _Number, _Object, _String, _Undefined } from '../rob/built-ins.js';
 import { Always, Never } from './authenticator.js';
+import * as Auth from './authenticator.js';
+import { handler, SMBuilder, _defined, _get, _getBind } from './stack-machine-generator.js';
+import { C, StackMachine } from './stack-machine.js';
 
 export const moduleURL = import.meta.url;
 
+export class LinkError extends Error {
+    static moduleURL = moduleURL;
+    static encoding = struct(this, { message: utf16, stack: utf16, errors:any});
+};
+
+export class EncodingError extends LinkError {
+    static moduleURL = moduleURL;
+    static encoding = struct(this, { message: utf16, stack: utf16, errors:any});
+};
+
+export class AuthenticationError extends LinkError {
+    static moduleURL = moduleURL;
+    static encoding = struct(this, { message: utf16, stack: utf16 });
+};
 
 /** Add 'module' to show modules being sent, add 'buffer' to show raw data. */
-const DEBUG = [];
+const DEBUG = ['message','buffer'];
 
 /** An object which is sent as a link rather than as iteslf. (Any extern('link') encoding will also send as a link however)*/
 export class Linkable {
@@ -29,22 +44,21 @@ export class Linkable {
     static encoding = extern('link');
 }
 
-
-/** An object which references a remotely linked object. */
-export class Linked extends ChainToPipeHandler{
-    constructor (connection, uri) {
-        super();
-        this.resolve = async pipe => connection.request(new Resolve(await pipe.awaitAll(), this.proxy));
-    }
-
+export class LinkedReference {
     static moduleURL = moduleURL;
     static encoding = extern('link');
+}
 
-    toPrimitive(hint) {
-        if (hint === 'string' || hint === 'default')
-            return `<linked ${this.randId}>`;
-        if (hint === 'number')
-            return NaN;
+export class Linked extends SMBuilder {
+    static moduleURL = moduleURL;
+    static encoding = extern('link');
+    constructor(connection, rootItem) {
+        super();
+        this.connection = connection;
+        return this.sub(rootItem);
+    }
+    async onThen() {
+        return this.connection.request(new Resolve(this.stack));
     }
 }
 
@@ -80,23 +94,34 @@ export class LinkScheme extends ExternScheme {
         if (this.remoteCache.has(uri)) {
             return this.remoteCache.get(uri).deref();
         }
-        const linked = new Linked(this.connection, uri).proxy;
-        this.registry.register(linked, uri);
-        this.uriCache.set(linked, uri);
-        this.remoteCache.set(uri, new WeakRef(linked));
-        return linked;
+        const linkedRef = new LinkedReference();
+        this.registry.register(linkedRef, uri);
+        this.uriCache.set(linkedRef, uri);
+        this.remoteCache.set(uri, new WeakRef(linkedRef));
+        return new Linked(this.connection, linkedRef);
     }
     clear(uri) {
         this.itemCache.delete(uri);
+        if (this.itemCache.size === 0) {
+            this.connection.connectionInterface.close();
+            console.log(`closed connection ${connection.id} due to cache size of null`)
+        }
     }
 }
 
 /** Header to reduce the size of common messages. */
 const MESSAGING_HEAD = [
-    _String, _Number, _Object, _Error, _Null, _Undefined,
-    Message, Authenticate, Request, Response, Resolve,
-    Linked, Linkable, 
-    Pipe, PipeNode, _PREV, _IN, get, apply, set, deleteProperty,
+    // base types
+    _String, _Number, _Object, _Error, _Null, _Undefined, _Array, _Module,
+
+    // messaging
+    Message, Authenticate, Request, Response, Resolve, Reject,
+
+    // linking
+    Linked, LinkedReference, Linkable,
+
+    // stack machines
+    StackMachine, C, _get, _getBind, _defined
 ];
 
 /** Default api used with link*/
@@ -125,7 +150,7 @@ export class WSLink {
     async onRequest (request, respondWith) {
         const {socket, response} = Deno.upgradeWebSocket(request);
         try {
-            new Connection(socket, this.api, this.authenticator);
+            new Connection(socket, this.api, this.authenticator, undefined, request.headers);
             respondWith(response);
         }
         catch(err) {
@@ -137,13 +162,15 @@ export class WSLink {
 
 /** Object which handles a connnection over some interface via ROB.  ConnectionInterface must implement onmessage and send */
 export class Connection {
-    constructor(connectionInterface, api = {}, authenticator = new Always()) {
+    constructor(connectionInterface, api = {}, authenticator = new Always(), authApi = new Linkable(Auth), initialRequestHeaders) {
         this.authenticator = authenticator;
         this.authenticated = false;
         this.connectionInterface = connectionInterface;
         this.api = api;
+        this.authApi = authApi;
+        this.initialRequestHeaders = initialRequestHeaders;
         this.connectionInterface.onmessage = (e) => this.recieve(e.data);
-
+        this.secureResolvables = false;
         this.closers = [];
         this.connectionInterface.onclose = (e) => {for(const func of this.closers) func()};
 
@@ -151,22 +178,27 @@ export class Connection {
         this.instances = new Map();
         this.externHandler = new ExternHandler({...COMMUNICATION_SCHEMES, link: new LinkScheme(this)});
     }
-    async authenticate(token = '') {
-        return await this.request(new Authenticate(token));
+    authenticate(token = '') {
+            return this.request(new Authenticate(token, this.authApi));
     }
     /**send some data as rob*/
     async send(data) {
         try {
             const writer = new Write(this.externHandler, MESSAGING_HEAD);
-            if (DEBUG.includes('message')) console.log('🌐<🖥️', data);
-            any(writer)(data);
+            if (DEBUG.includes('message')) console.log('<<< ', data);
+            try {
+                any(writer)(data);
+            }
+            catch(err) {
+                throw new EncodingError('unable to encode message.  encodings probably not defined')
+            }
             const buffer = writer.toBuffer();
-            if (DEBUG.includes('buffer')) console.log('🌐<🖥️',buffer.byteLength, ' ', bufferString(buffer));
+            if (DEBUG.includes('buffer')) console.log(`<${buffer.byteLength.toString().padStart(4,'0')}< ${bufferString(buffer)}`);
             this.connectionInterface.send(buffer);
         }
         catch(err) {
-            console.log(data);
-            throw err;
+            if (err instanceof EncodingError) throw err;
+            throw new LinkError('error sending data over link');
         }
     }
     /** handle recieved data */
@@ -175,9 +207,11 @@ export class Connection {
         if (data instanceof Blob)
             buffer = await data.arrayBuffer();
         const reader = new Read(this.externHandler, buffer, MESSAGING_HEAD);
-        if (DEBUG.includes('buffer')) console.log('🌐>🖥️',buffer.byteLength, ' ', bufferString(buffer));
-        const message = await any(reader)();
-        if (DEBUG.includes('message')) console.log('🌐>🖥️', message);
+        let message;
+        try { message = await any(reader)(); }
+        catch(err) { throw new EncodingError('unable to decode message')}
+        if (DEBUG.includes('buffer')) console.log(`>${buffer.byteLength.toString().padStart(4,'0')}> ${bufferString(buffer)}`);
+        if (DEBUG.includes('message')) console.log('>>>' , message);
         if (message instanceof Response) {
             this.unresolvedPromises.get(message.id).resolve(message.value);
             this.unresolvedPromises.delete(message.id);
@@ -193,23 +227,32 @@ export class Connection {
         }
         if (message instanceof Resolve) {
             try {
-                const result = await message.resolver.resolve(message.input);
-                this.send(message.response(result));
+                if (!this.authenticated | this.secureResolvables) {
+                    if (!(message.resolver instanceof StackMachine))
+                        throw new AuthenticationError('request breaks connection security policy');
+                }
+                //console.log('RESOLVE', message.resolver)
+                const result = await message.resolver.resolve();
+                await this.send(message.response(result));
             }
             catch(err) {
+                console.log('caughet err')
                 this.send(message.error(err));
             }
             return;
         }
         if (message instanceof Authenticate) {
-            if(this.authenticator.authencicate(message.key)) {
-                this.authenticated = true;
-                //const api = await import(message.url);
-                await this.send(message.response(this.api));
-                //auto run onlink?
+            try {
+                if (await this.authenticator.authencicate(message.key, message.api, this.initialRequestHeaders)) {
+                    this.authenticated = true;
+                    await this.send(message.response(this.api));
+                }
+                else {
+                    throw new AuthenticationError(`could not authenticate`);
+                }
             }
-            else {
-                await this.send(message.error(new Error(`could not authenticate`)));
+            catch (err) {
+                this.send(message.error(err));
                 this.connectionInterface.close();
             }
             return;
@@ -229,9 +272,10 @@ export class Connection {
     }
 }
 
+const activeConnections = new Map();
 
 //** Connect to a server via Websocket, this will just return the open API of the connection */
-export async function connect(socketUrl, key = 'password', api = {}, authencicator = new Never(), onclose = () => {}) {
+export async function link(socketUrl, key = '', api = {}, authencicator = new Never()) {
     // connect to localhost more directly to speed up connections
     if (new URL(socketUrl).hostname === 'localhost') {
         const tempURL = new URL(socketUrl);
@@ -240,8 +284,8 @@ export async function connect(socketUrl, key = 'password', api = {}, authencicat
     }
     
     // if not connected connect
-    if (socketUrl in connect.connections) {
-        return connect.connections[socketUrl];
+    if (activeConnections.has(activeConnections)) {
+        return link.connections[socketUrl];
     }
     else {
         // connect to the server using websocket
@@ -258,31 +302,66 @@ export async function connect(socketUrl, key = 'password', api = {}, authencicat
 
         // create a connection
         const connection = new Connection(socket, api, authencicator);
-        const linked = await connection.request(new Authenticate(key));
-        connect.connections[socketUrl] = connection;
+        const linked = await connection.authenticate(key);
+        activeConnections.set(socketUrl,connection);
         return linked;
     }
 }
-connect.connections = {};
+
 
 /** Link to a server via Websocket (at the moment), link now connects to a specific socket url, and the url of the file to link to is seperate*/
-export async function link (resourceLocation, socketUrl, key, api, authencicator, onclose) {
+export async function linkFile (resourceLocation, socketUrl, key, api, authencicator) {
 
     // build the socket url if it has not been defined
-    if (socketUrl === undefined) {
-        const tempURL = new URL(location?.origin ?? import.meta.url);
-        if (tempURL.protocol === 'http:') tempURL.protocol = 'ws:';
-        else if (tempURL.protocol === 'https:') tempURL.protocol = 'wss:';
-        else throw new Error('cannot auto define socket URL');
-        socketUrl = tempURL.origin.toString();
+    if (!socketUrl) socketUrl = defaultUrl();
+    //!! relative path resolution may not work on safari
+    let url;
+    if (/^\.?\.?\//.test(resourceLocation)) {
+        let stack = new Error().stack.split('\n').filter(v => /https?:\/\//g.test(v))
+        const sourceUrl = stack[1].slice(
+            stack[1].lastIndexOf('http'), 
+            stack[1].lastIndexOf('.')+3
+        )
+        url = new URL(resourceLocation, sourceUrl).toString();
     }
-    const server = await connect(socketUrl);
-    return server.import(resourceLocation);
+    else
+        url = resourceLocation;
+   
+    const server = await link(socketUrl);
+    return server.import(url);
 }
 
-/**
-Small Example:
-const {link} = await import('./stonefish/link.js');
-const link = await link('./stonefish/test.js');
-await link.log('hello world');
- */
+export function unlink(url) {
+    if (!url) url = defaultUrl();
+    const urlBuild = new URL(url);
+    if (urlBuild.hostname === 'localhost')
+    urlBuild.hostname = '127.0.0.1';
+    const connection = activeConnections.get(urlBuild.toString());
+    if (connection) {
+        connection.connectionInterface.close();
+    }
+}
+
+function defaultUrl () {
+    const tempURL = new URL(location?.origin ?? import.meta.url);
+    if (tempURL.protocol === 'http:') tempURL.protocol = 'ws:';
+    else if (tempURL.protocol === 'https:') tempURL.protocol = 'wss:';
+    else throw new Error('cannot auto define socket URL');
+    return tempURL.origin.toString();
+}
+
+export function connection (linked) {
+    return handler(linked).connection;
+}
+
+
+/*
+PLANS
+unlink is not perfect
+what about unlinking from the server side?
+as links are cached multiple links are ok, but how to deal with caching links
+and unlinking on the server, and where would you do that?
+and detecting links that have closed unnanounced (should be easy with polling as that is nessecary anyway)
+what happens if you link to the same location multiple times and then unlink, as they are
+through the connection and links are cached all will be killed as far as I know.
+*/

@@ -5,8 +5,8 @@
  * deno run --allow-net -q http://localhost/stonefish/chat-example.js
  */
 
-import {link, Linkable, connect as linkConnect} from './link.js';
-import { HANDLER } from './chain-to-pipe.js';
+import {linkFile, Linkable, link as link} from './link.js';
+import { HANDLER } from '../scrap/remote.js';
 import {readLines} from 'https://deno.land/std@0.109.0/io/bufio.ts';
 
 // set of all connected linked log functions
@@ -70,12 +70,12 @@ if (globalThis.Deno && Deno.mainModule === import.meta.url) {
 
     // connect to the server
     console.log('connecting to the server')
-    const server = await link(import.meta.url,undefined,undefined,undefined,undefined,v => console.log('CLOSED'));
+    const server = await linkFile(import.meta.url,undefined,undefined,undefined,undefined,v => console.log('CLOSED'));
     await server.connect(name, new Linkable((text) => consoleWrite(`\u001b[0G\u001b[J${text}\n${color}${name}> `)));
     await server.serverlog(server);
     //console.log(server.connect[HANDLER])
     await server.log(`${color}[${name} joined the chat]${reset}`);
-    console.log(linkConnect.connections);
+    console.log(link.connections);
     // log via server to all connections on server when entered
     for await (const input of readLines(Deno.stdin)) {
         consoleWrite("\r\u001b[1A");
