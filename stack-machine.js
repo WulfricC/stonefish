@@ -23,14 +23,14 @@ export class StackMachine {
         for(const v of this.nodes) yield v;
     }
 
-    resolve(...input) {
+    async resolve(...input) {
         const stack = input ?? [];
         for (const node of this.nodes) {
             if (node === C) {
                 const count = stack.pop();
                 const func = stack.pop();
                 const args = stack.splice(-count, count);
-                stack.push(func(...args));
+                stack.push(await func(...args));
             }
             else {
                 stack.push(node);

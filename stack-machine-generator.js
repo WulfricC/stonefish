@@ -15,6 +15,12 @@ export function _getBind(object, key) {
  }
  _getBind.moduleURL = import.meta.url;
 
+ /** Set a value on an object*/
+export function _set(object, key, value) {
+        return object[key] = value;
+ }
+ _set.moduleURL = import.meta.url;
+
  /** Mostly for building a function to check that objects exist*/
 export function _defined(object) {
     return object != undefined ? true : false;
@@ -25,6 +31,7 @@ export function _defined(object) {
 const STACK = Symbol();
 const DEFINED = Symbol();
 const HANDLER = Symbol();
+const SET = Symbol();
 
 // the base pipe builder class which the proxy pretends to be
 // always returns a proxy on construction, just pretends to be a class
@@ -33,8 +40,9 @@ export class SMBuilder {
 
     cache = new Map();
 
+    /** the function called on then */
     async onThen(){
-        return this.stack.resolve();
+        return (await this.stack.normalize).resolve();
     }
     
     /** Construct a subNode of this Builder */
@@ -104,13 +112,17 @@ export class SMBuilder {
         return sub;
     }
 
+    /** return whether the item should be expanded or not */
+    expandDef(item) {
+        return item instanceof SMBuilder;
+    }
+
     apply(target, thisArg, args) {
-        
         const argList = [];
         
-        // merge stacks of inputs into this stack
+        // merge stacks of inputs into this stack if the class says they should defined in this.expand
         for(const arg of args) {
-            if (arg instanceof SMBuilder)
+            if (this.expandDef(arg))
                 argList.push(...arg[STACK]);
             else argList.push(arg);
         }
@@ -122,6 +134,17 @@ export class SMBuilder {
 
         // add calling the function with the args to the stack
         return this.sub(...argList, ...preNodes, args.length, C);
+    }
+
+    set(target, property, value) {
+        // merge stacks of inputs into this stack if the class says they should defined in this.expand
+        if (this.expandDef(value))
+            value = value[STACK];
+        else value = [value];
+
+        // add calling the function with the args to the stack and call it to immediatly run the set
+        this.sub(...this.stack, property, ...value, _set, 3, C).then();
+        return true;
     }
 
     /** Gets the prototype so that the proxy acts like the class */
@@ -144,3 +167,23 @@ export function stack (builder) {
 export function handler (builder) {
     return builder[HANDLER]
 }
+
+export function set(builder, property, value) {
+    // merge stacks of inputs into this stack if the class says they should defined in this.expand
+    if (builder[HANDLER].expandDef(value))
+        value = value[STACK];
+    else value = [value];
+
+    if (builder[HANDLER].expandDef(property))
+        property = property[STACK];
+    else property = [property];
+
+    // add calling the function with the args to the stack
+    return builder[HANDLER].sub(...builder[STACK], ...property, ...value, _set, 3, C);
+}
+
+// TODOS
+/*
+There is a fair bit of code duplication and things could really be cleaned up
+
+*/

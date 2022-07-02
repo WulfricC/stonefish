@@ -1,15 +1,16 @@
 import { Request, Response, Deref, Authenticate as Authenticate, Resolve, Message, Reject as Reject } from './message.js';
-import { any, extern, type, struct, utf16, reference, array } from '../rob/encodings.js';
+import { any, extern, type, struct, utf16, reference, array, string } from '../rob/encodings.js';
 import { ExternScheme } from '../rob/scheme-handler.js';
-import { ExternHandler, COMMUNICATION_SCHEMES } from '../rob/extern-handler.js';
+import { ExternHandler, COMMUNICATION_SCHEMES, HttpExtern } from '../rob/extern-handler.js';
 import { Read, Write } from '../rob/reader-writer.js';
 import { bufferString, randomInt } from '../utils/mod.js';
 import '../rob/built-ins.js'
 import { _Array, _Error, _Module, _Null, _Number, _Object, _String, _Undefined } from '../rob/built-ins.js';
 import { Always, Never } from './authenticator.js';
 import * as Auth from './authenticator.js';
-import { handler, SMBuilder, _defined, _get, _getBind } from './stack-machine-generator.js';
+import { handler, SMBuilder, stack, _defined, _get, _getBind, _set } from './stack-machine-generator.js';
 import { C, StackMachine } from './stack-machine.js';
+import { importEsmod } from '../rob/esmod.js';
 
 export const moduleURL = import.meta.url;
 
@@ -57,8 +58,22 @@ export class Linked extends SMBuilder {
         this.connection = connection;
         return this.sub(rootItem);
     }
+    expandDef(item) {
+        // only linked stacks which point to the same location are expanded in
+        return item instanceof Linked && stack(item).nodes[0] === this.stack.nodes[0]
+    }
     async onThen() {
-        return this.connection.request(new Resolve(this.stack));
+        // sync all non-merged stack values
+        const synced = [];
+        for (let i = 0; i < this.stack.nodes.length; i ++) {
+            if (this.stack.nodes[i] instanceof Linked)
+                synced[i] = await this.stack.nodes[i];
+            else synced[i] = this.stack.nodes[i];
+        }
+        const syncedStack = new StackMachine(...synced);
+        
+        // resolve the stack machine on the server
+        return this.connection.request(new Resolve(syncedStack));
     }
 }
 
@@ -100,12 +115,14 @@ export class LinkScheme extends ExternScheme {
         this.remoteCache.set(uri, new WeakRef(linkedRef));
         return new Linked(this.connection, linkedRef);
     }
-    clear(uri) {
+    unlink(uri, e) {
+        const item = this.itemCache.get(uri);
+        if (typeof item.onunlink === 'function') item.onunlink(e);
         this.itemCache.delete(uri);
-        if (this.itemCache.size === 0) {
-            this.connection.connectionInterface.close();
-            console.log(`closed connection ${connection.id} due to cache size of null`)
-        }
+    }
+    onunlink(e) {
+        for (const k of this.itemCache.keys())
+            this.unlink(k, e);
     }
 }
 
@@ -121,13 +138,14 @@ const MESSAGING_HEAD = [
     Linked, LinkedReference, Linkable,
 
     // stack machines
-    StackMachine, C, _get, _getBind, _defined
+    StackMachine, C, _get, _getBind, _defined, _set,
 ];
 
 /** Default api used with link*/
 const LINK_API = new Linkable({
     import: async function(url) {
-        return  import(url);
+        console.log(url.replace(/^https?:/,'esmod:'))
+        return importEsmod(url.replace(/^https?:/,'esmod:'));
     },
     ping: async function(val) {
         return val;
@@ -136,16 +154,17 @@ const LINK_API = new Linkable({
 
 /** Server handler linked apis over webSocket. */
 export class WSLink {
-    constructor({path = '/', authenticator = new Always()} = {}, api = LINK_API) {
+    constructor({path = '/', authenticator = new Always(), api = LINK_API} = {}) {
         this.path = path;
         this.authenticator = authenticator;
         this.api = api;
     }
     route (request){
-        return request.method === 'GET'
+        const routehere = request.method === 'GET'
             && request.headers.get('upgrade') === 'websocket'
             && new URL(request.url).pathname === this.path
         ;
+        return routehere;
     }
     async onRequest (request, respondWith) {
         const {socket, response} = Deno.upgradeWebSocket(request);
@@ -172,11 +191,13 @@ export class Connection {
         this.connectionInterface.onmessage = (e) => this.recieve(e.data);
         this.secureResolvables = false;
         this.closers = [];
-        this.connectionInterface.onclose = (e) => {for(const func of this.closers) func()};
+        this.connectionInterface.onclose = (e) => {this.linkHandler.onunlink(e)};
+        this.connectionInterface.onerror = (e) => {this.linkHandler.onunlink(e);};
 
         this.unresolvedPromises = new Map();
         this.instances = new Map();
-        this.externHandler = new ExternHandler({...COMMUNICATION_SCHEMES, link: new LinkScheme(this)});
+        this.linkHandler = new LinkScheme(this);
+        this.externHandler = new ExternHandler({...COMMUNICATION_SCHEMES, link: this.linkHandler});
     }
     authenticate(token = '') {
             return this.request(new Authenticate(token, this.authApi));
@@ -190,7 +211,8 @@ export class Connection {
                 any(writer)(data);
             }
             catch(err) {
-                throw new EncodingError('unable to encode message.  encodings probably not defined')
+                console.log(err);
+                throw new EncodingError(`unable to encode message.  encodings probably not defined`)
             }
             const buffer = writer.toBuffer();
             if (DEBUG.includes('buffer')) console.log(`<${buffer.byteLength.toString().padStart(4,'0')}< ${bufferString(buffer)}`);
@@ -223,7 +245,7 @@ export class Connection {
             return;
         }
         if (message instanceof Deref) {
-            this.externHandler.clear(message.uri);
+            this.externHandler.unlink(message.uri);
         }
         if (message instanceof Resolve) {
             try {
@@ -236,7 +258,6 @@ export class Connection {
                 await this.send(message.response(result));
             }
             catch(err) {
-                console.log('caughet err')
                 this.send(message.error(err));
             }
             return;
@@ -275,17 +296,23 @@ export class Connection {
 const activeConnections = new Map();
 
 //** Connect to a server via Websocket, this will just return the open API of the connection */
-export async function link(socketUrl, key = '', api = {}, authencicator = new Never()) {
+export async function link(socketUrl, {
+            key = '', 
+            api = {}, 
+            authencicator = new Never(),
+            onunlink = (e) => console.log(`connection lost with ${socketUrl}}`)
+        }={}) {
+
     // connect to localhost more directly to speed up connections
     if (new URL(socketUrl).hostname === 'localhost') {
         const tempURL = new URL(socketUrl);
         tempURL.hostname = '127.0.0.1';
         socketUrl = tempURL.toString();
     }
-    
+
     // if not connected connect
-    if (activeConnections.has(activeConnections)) {
-        return link.connections[socketUrl];
+    if (activeConnections.has(socketUrl)) {
+        return activeConnections.get(socketUrl);
     }
     else {
         // connect to the server using websocket
@@ -295,8 +322,8 @@ export async function link(socketUrl, key = '', api = {}, authencicator = new Ne
         await new Promise(
             (resolve, reject) => {
                 socket.onopen = () => resolve(socket);
-                socket.onerror = () => reject(socket);
-                socket.onclose = (e) => {onclose(e); reject(socket)};
+                socket.onerror = (e) => {onunlink(e); reject(socket)};
+                socket.onclose = (e) => {onunlink(e); reject(socket)};
                 }
             );
 
@@ -310,7 +337,7 @@ export async function link(socketUrl, key = '', api = {}, authencicator = new Ne
 
 
 /** Link to a server via Websocket (at the moment), link now connects to a specific socket url, and the url of the file to link to is seperate*/
-export async function linkFile (resourceLocation, socketUrl, key, api, authencicator) {
+export async function linkFile (resourceLocation,  {socketUrl, key, api, authencicator, onunlink}={}) {
 
     // build the socket url if it has not been defined
     if (!socketUrl) socketUrl = defaultUrl();
@@ -327,7 +354,7 @@ export async function linkFile (resourceLocation, socketUrl, key, api, authencic
     else
         url = resourceLocation;
    
-    const server = await link(socketUrl);
+    const server = await link(socketUrl, {key, api, authencicator, onunlink});
     return server.import(url);
 }
 
