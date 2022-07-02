@@ -30,7 +30,7 @@ export class AuthenticationError extends LinkError {
 };
 
 /** Add 'module' to show modules being sent, add 'buffer' to show raw data. */
-const DEBUG = ['message','buffer'];
+const DEBUG = [];
 
 /** An object which is sent as a link rather than as iteslf. (Any extern('link') encoding will also send as a link however)*/
 export class Linkable {
