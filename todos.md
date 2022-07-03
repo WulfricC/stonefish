@@ -22,3 +22,6 @@ Re-add a permission system.
 ## MAK
 
 add importing templates from urls
+
+## BUGS
+calling linked functions in intervals

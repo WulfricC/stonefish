@@ -14,6 +14,11 @@ import { importEsmod } from '../rob/esmod.js';
 
 export const moduleURL = import.meta.url;
 
+export class DisconnectionException extends Error {
+    static moduleURL = moduleURL;
+    static encoding = struct(this, { message: utf16, stack: utf16, errors:any});
+}
+
 export class LinkError extends Error {
     static moduleURL = moduleURL;
     static encoding = struct(this, { message: utf16, stack: utf16, errors:any});
@@ -259,6 +264,8 @@ export class Connection {
             }
             catch(err) {
                 this.send(message.error(err));
+                if (err instanceof DisconnectionException)
+                    this.connectionInterface.close();
             }
             return;
         }

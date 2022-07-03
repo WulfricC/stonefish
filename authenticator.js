@@ -18,6 +18,7 @@ export class Never extends Authenicator {
 export class KeyMatch extends Authenicator {
     #key;
     constructor (key) {
+        super();
         this.#key = key;
     }
     async authencicate(key) {

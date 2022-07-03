@@ -8,7 +8,7 @@ console.log('server started')
 
 // start the bootstrap server for fetching some of the initial files
 new Server()
- .route(new WSLink({authenticator: new Always()}))
+ .route(new WSLink({authenticator: new IsLocal()}))
  .route(new WSLink({path: '/test', authenticator: new Always(), api: new Linkable({a:1})}))
  //.route(new WebProxyHandler({webURL:'http://wulfricc.github.io'}))
  .route(new StaticFileHandler())
